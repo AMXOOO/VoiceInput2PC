@@ -1,0 +1,196 @@
+import argparse
+import ctypes
+from ctypes import wintypes
+import hashlib
+import json
+import os
+import queue
+import threading
+import tempfile
+import datetime
+import sqlite3
+import tkinter as tk
+from tkinter import ttk, messagebox
+from pathlib import Path
+import pystray
+from PIL import Image, ImageDraw
+from receiver.core import Relay
+from receiver.http_server import make_server
+from receiver.win_input import type_text, capture_target, copy_text
+
+
+def read_history(relay):
+    try:
+        return relay.recent(), ''
+    except (sqlite3.Error, OSError):
+        return None, '暂时无法读取历史记录；仍可在托盘暂停或退出，稍后重试'
+
+
+def pump_commands(commands, handle, schedule, report_error):
+    running = True
+    try:
+        while not commands.empty():
+            if handle(commands.get_nowait()) is False:
+                running = False
+                return
+    except Exception as exc:
+        report_error(exc)
+    finally:
+        if running:
+            schedule()
+
+
+def startup_error_message(exc, stage, folder, port):
+    lines = ['接收端启动失败：' + stage, '配置目录：' + str(folder)]
+    if port is not None:
+        lines.append('监听端口：' + str(port))
+    code = getattr(exc, 'winerror', None) or getattr(exc, 'errno', None)
+    lines.append(type(exc).__name__ + ((' [' + str(code) + ']') if code else '') + '：' + str(exc))
+    return '\n'.join(lines)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config-dir', default=str(Path(os.environ['LOCALAPPDATA']) / 'VoiceInput2PC'))
+    parser.add_argument('--show', action='store_true')
+    parser.add_argument('--diagnostic-report', default=str(Path(tempfile.gettempdir()) / 'VoiceInput2PC-startup.json'))
+    args = parser.parse_args()
+    folder = Path(args.config_dir)
+    # Enforce one process before opening/recovering the message database.
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    identity = hashlib.sha256(str(folder.resolve()).lower().encode()).hexdigest()[:16]
+    mutex = kernel.CreateMutexW(None, False, 'Local\\VoiceInput2PC-' + identity)
+    if not mutex:
+        return
+    if ctypes.get_last_error() == 183:
+        kernel.CloseHandle(mutex)
+        return
+    root = tk.Tk()
+    root.withdraw()
+    root.title('语音输入电脑 · 电脑接收端')
+    root.geometry('680x470')
+    root.protocol('WM_DELETE_WINDOW', root.withdraw)
+    stage, port = '读取配置', None
+    try:
+        config = json.loads((folder / 'config.json').read_text(encoding='utf-8'))
+        port = config['port']
+        stage = '打开本机消息记录'
+        relay = Relay(folder / 'messages.db', type_text, target_provider=capture_target)
+        stage = '启动监听'
+        server = make_server(('0.0.0.0', config['port']), relay, config['token'],
+                             folder / 'cert.pem', folder / 'key.pem')
+    except Exception as exc:
+        detail = startup_error_message(exc, stage, folder, port)
+        try:
+            Path(args.diagnostic_report).write_text(json.dumps({
+                'time': datetime.datetime.now().isoformat(), 'ok': False,
+                'stage': stage, 'detail': detail}, ensure_ascii=False), encoding='utf-8')
+        except OSError:
+            pass
+        messagebox.showerror('语音输入电脑', detail)
+        root.destroy()
+        kernel.CloseHandle(mutex)
+        return
+
+    commands = queue.Queue()
+    image = Image.new('RGBA', (64, 64), '#16705b')
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((10, 16, 54, 47), radius=5, outline='white', width=4)
+    for y in (25, 34):
+        for x in (19, 29, 39):
+            draw.rectangle((x, y, x+4, y+3), fill='white')
+    icon = pystray.Icon('VoiceInput2PC', image, '语音输入电脑 · 正在接收文字', menu=pystray.Menu(
+        pystray.MenuItem('查看状态和最近文字', lambda *_: commands.put('show'), default=True),
+        pystray.MenuItem('暂停自动输入', lambda *_: commands.put('pause'), checked=lambda _: relay.paused),
+        pystray.MenuItem('退出', lambda *_: commands.put('exit'))))
+
+    container = ttk.Frame(root, padding=18)
+    container.pack(fill='both', expand=True)
+    ttk.Label(container, text='语音输入电脑', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
+    status = ttk.Label(container, text='正在接收 · 手机与电脑连接同一局域网')
+    status.pack(anchor='w', pady=(6, 4))
+    ttk.Label(container, text='电脑点中输入位置 → 手机开始输入 → 使用手机输入法的语音按钮。').pack(anchor='w')
+    ttk.Label(container, text='无需逐条发送；不按回车、不改剪贴板。切换输入位置前请先暂停。').pack(anchor='w')
+    ttk.Label(container, text='最近收到的文字（仅保存在本机，显示最近 100 条）').pack(anchor='w', pady=(20, 5))
+    listing = tk.Listbox(container, height=6, font=('Microsoft YaHei UI', 10), exportselection=False)
+    listing.pack(fill='x')
+    preview = tk.Text(container, height=5, wrap='word', font=('Microsoft YaHei UI', 11))
+    preview.pack(fill='both', expand=True, pady=8)
+    rows = []
+
+    def refresh():
+        nonlocal rows
+        snapshot, error = read_history(relay)
+        if snapshot is None:
+            status.config(text=error)
+            return
+        rows = snapshot
+        listing.delete(0, 'end')
+        for row in rows:
+            prefix = '已发送' if row['status'] == 'inserted' else '仅保存'
+            listing.insert('end', prefix + '  ' + row['text'].replace('\n', ' ')[:65])
+        if rows:
+            listing.selection_set(0)
+            select()
+        status.config(text='已暂停自动输入 · 新文字仍会保存' if relay.paused else '正在接收 · 手机与电脑连接同一局域网')
+
+    def select(*_):
+        sel = listing.curselection()
+        preview.delete('1.0', 'end')
+        if sel and sel[0] < len(rows):
+            preview.insert('1.0', rows[sel[0]]['text'])
+
+    def copy_selected():
+        sel = listing.curselection()
+        if sel:
+            copy_text(rows[sel[0]]['text'])
+            status.config(text='已复制，可切换到目标窗口按 Ctrl+V')
+
+    listing.bind('<<ListboxSelect>>', select)
+    buttons = ttk.Frame(container)
+    buttons.pack(fill='x')
+    ttk.Button(buttons, text='复制选中文字', command=copy_selected).pack(side='left')
+    ttk.Button(buttons, text='刷新', command=refresh).pack(side='left', padx=8)
+    ttk.Button(buttons, text='收起到托盘', command=root.withdraw).pack(side='right')
+
+    def handle_command(command):
+        if command == 'show':
+            refresh()
+            root.deiconify()
+            root.lift()
+        elif command == 'pause':
+            relay.paused = not relay.paused
+            icon.update_menu()
+            refresh()
+        elif command == 'exit':
+            icon.stop()
+            threading.Thread(target=server.shutdown, daemon=True).start()
+            root.destroy()
+            return False
+        return True
+
+    def poll():
+        pump_commands(commands, handle_command, lambda: root.after(200, poll),
+                      lambda exc: status.config(text='界面操作暂未成功，可在托盘重试或退出'))
+
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=icon.run, daemon=True).start()
+    try:
+        Path(args.diagnostic_report).write_text(json.dumps({
+            'time': datetime.datetime.now().isoformat(), 'ok': True,
+            'config_dir': str(folder), 'port': port}, ensure_ascii=False), encoding='utf-8')
+    except OSError:
+        pass
+    if args.show:
+        commands.put('show')
+    poll()
+    root.mainloop()
+    server.server_close()
+    kernel.CloseHandle(mutex)
+
+
+if __name__ == '__main__':
+    main()

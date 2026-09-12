@@ -1,0 +1,1 @@
+"""Native Windows text receiver."""

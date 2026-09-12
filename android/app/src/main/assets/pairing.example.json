@@ -1,0 +1,6 @@
+{
+  "host": "YOUR_COMPUTER_IP_OR_NAME",
+  "port": 23337,
+  "token": "GENERATED_LOCALLY_BY_PROVISION_SCRIPT",
+  "fingerprint": "GENERATED_LOCALLY_BY_PROVISION_SCRIPT"
+}

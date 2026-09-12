@@ -1,0 +1,365 @@
+package io.github.amxooo.voiceinput2pc;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.InputType;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.*;
+import org.json.JSONObject;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class MainActivity extends Activity {
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private CommitEditText editor;
+    private TextView status, destination, counter;
+    private Button start, fresh, retry;
+    private SharedPreferences prefs;
+    private RelayTransport client;
+    private CommitTracker tracker;
+    private String host, legacyPendingRaw = "";
+    private boolean busy, loading, destroyed, resumed, storageBlocked;
+    private int activationEpoch;
+    private final int green = Color.rgb(22,112,91);
+    private final Runnable flush = this::transmitCommitted;
+
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private TextView label(String text, int size, int color) {
+        TextView view = new TextView(this);
+        view.setText(text); view.setTextSize(size); view.setTextColor(color);
+        return view;
+    }
+    private LinearLayout.LayoutParams row(int height) {
+        return new LinearLayout.LayoutParams(-1, height < 0 ? height : dp(height));
+    }
+    private void say(String text, boolean error) {
+        status.setText(text); status.setTextColor(error ? Color.rgb(168,70,35) : green);
+    }
+
+    @Override public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        prefs = getSharedPreferences("voiceinput2pc", MODE_PRIVATE);
+        try {
+            JSONObject pairing;
+            try (java.io.InputStream stream = getAssets().open("pairing.json")) {
+                pairing = new JSONObject(RelayClient.read(stream));
+            }
+            host = prefs.getString("host", pairing.getString("host"));
+            client = new RelayClient(pairing);
+        } catch (Exception exc) {
+            setContentView(label("连接配置缺失，请重新安装这台电脑配套的 APK。",18,Color.DKGRAY));
+            return;
+        }
+        String draft = prefs.getString("draft", ""), sent = prefs.getString("sent", "");
+        String old = prefs.getString("pending", "");
+        CommitTracker.Pending pending = null;
+        legacyPendingRaw = prefs.getString("legacyPendingRaw", "");
+        if (!old.isEmpty()) {
+            String snapshot = prefs.getString("pendingSnapshot", draft);
+            try {
+                JSONObject value = new JSONObject(old);
+                pending = new CommitTracker.Pending(value.getString("id"), snapshot,
+                    value.getString("text"), value.optString("session", ""));
+            } catch (Exception invalid) {
+                legacyPendingRaw = old;
+                pending = new CommitTracker.Pending("legacy-unconfirmed", snapshot, draft, "");
+            }
+        }
+        tracker = new CommitTracker(sent, draft, pending, prefs.getBoolean("savedOnly", false));
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(20),dp(20),dp(20),dp(12));
+        layout.setBackgroundColor(Color.rgb(247,248,244));
+        layout.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.setPadding(dp(20), insets.getSystemWindowInsetTop()+dp(12), dp(20), insets.getSystemWindowInsetBottom()+dp(8));
+            return insets;
+        });
+        TextView title = label("语音输入电脑",28,Color.rgb(31,48,43));
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); layout.addView(title,row(-2));
+        destination = label("电脑  " + host + "   ›",13,Color.DKGRAY);
+        destination.setPadding(0,dp(6),0,dp(10));
+        destination.setOnClickListener(v -> editAddress()); layout.addView(destination,row(-2));
+        status = label("已暂停 · 先选中电脑输入框，再点开始",14,green);
+        layout.addView(status,row(-2));
+        editor = new CommitEditText(this);
+        editor.setId(1001); editor.setSaveEnabled(false);
+        editor.setTextSize(19); editor.setTextColor(Color.rgb(30,39,35));
+        editor.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        editor.setHint("点开始后，用输入法的麦克风说话。已确认文字会自动输入电脑。");
+        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        editor.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_ACTION_NONE);
+        editor.setPadding(dp(14),dp(14),dp(14),dp(14)); editor.setMinLines(3);
+        GradientDrawable card = new GradientDrawable();
+        card.setColor(Color.WHITE); card.setCornerRadius(dp(14)); card.setStroke(dp(1),Color.rgb(215,224,217));
+        editor.setBackground(card);
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1,0,1);
+        inputParams.topMargin=dp(12); inputParams.bottomMargin=dp(8);
+        layout.addView(editor,inputParams);
+        counter = label("",12,Color.GRAY); layout.addView(counter,row(-2));
+        retry = new Button(this); retry.setText("重试确认（同一条）");
+        retry.setOnClickListener(v -> retryPending()); layout.addView(retry,row(-2));
+        LinearLayout actions = new LinearLayout(this);
+        fresh = new Button(this); fresh.setText("新一段");
+        start = new Button(this); start.setText("开始输入到电脑");
+        start.setTextColor(Color.WHITE); start.setBackgroundTintList(ColorStateList.valueOf(green));
+        actions.addView(fresh,new LinearLayout.LayoutParams(0,dp(58),1));
+        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(0,dp(58),2);
+        startParams.leftMargin=dp(8); actions.addView(start,startParams); layout.addView(actions,row(-2));
+        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。换电脑窗口后请重新开始。换行、回车、Tab 会转为空格。",12,Color.GRAY);
+        hint.setPadding(0,dp(8),0,dp(2)); layout.addView(hint,row(-2));
+        setContentView(layout);
+        loading=true; editor.setText(draft); editor.setSelection(editor.length()); loading=false;
+        editor.setEditObserver(this::edited);
+        start.setOnClickListener(v -> toggleStart()); fresh.setOnClickListener(v -> newDraft());
+        updateControls();
+        if (pending != null) uncertainHint();
+        else if (tracker.isSaved()) say("电脑只保存了文字，未自动输入。点“保留并重置”核对后恢复。",true);
+        else if (tracker.hasConflict()) say("已输入部分发生修改。电脑原文不会改动，请保留并重置。",true);
+        else if (!draft.isEmpty()) say("草稿已恢复，当前暂停。点开始前请核对电脑已有文字。",false);
+        else health();
+    }
+
+    private boolean save() {
+        if (destroyed || tracker == null) return false;
+        CommitTracker.Pending pending = tracker.pending();
+        try {
+            String message = pending == null ? "" : message(pending).toString();
+            boolean stored = prefs.edit().putInt("schema",2).putString("host",host)
+                .putString("draft",tracker.draft()).putString("sent",tracker.sent())
+                .putString("pending",message).putString("pendingSnapshot",pending == null ? "" : pending.snapshot)
+                .putBoolean("savedOnly",tracker.isSaved()).putString("legacyPendingRaw",legacyPendingRaw)
+                .putBoolean("auto",false).commit();
+            storageBlocked = !stored;
+            if (!stored) { tracker.pause(); say("无法保存草稿，已暂停。请检查手机存储空间后重试。",true); }
+            return stored;
+        } catch (Exception e) {
+            storageBlocked = true; tracker.pause(); say("无法保存待确认文字，已暂停。",true); return false;
+        }
+    }
+    private JSONObject message(CommitTracker.Pending pending) throws Exception {
+        return new JSONObject().put("id",pending.id).put("text",pending.text).put("session",pending.session);
+    }
+    private void updateControls() {
+        if (destroyed || tracker == null) return;
+        start.setText(tracker.isActive() ? "暂停输入" : "开始输入到电脑");
+        start.setEnabled(tracker.isActive() || (!busy && !storageBlocked && tracker.pending() == null && !tracker.isSaved() && !tracker.hasConflict()));
+        fresh.setEnabled(!busy);
+        fresh.setText(tracker.pending() != null || tracker.isSaved() || tracker.hasConflict() ? "保留并重置" : "新一段");
+        retry.setVisibility(tracker.pending() != null && !tracker.pending().session.isEmpty() ? View.VISIBLE : View.GONE);
+        retry.setEnabled(!busy);
+        counter.setText("电脑已接收输入 " + tracker.sent().codePointCount(0,tracker.sent().length())
+            + " 字 · 本地草稿 " + tracker.draft().codePointCount(0,tracker.draft().length()) + " 字");
+        if (tracker.isActive() && resumed) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+    private void edited() {
+        if (loading || destroyed) return;
+        tracker.observe(editor.getText().toString(),editor.hasComposition(),editor.hasOpenEdit());
+        if (editor.wasConnectionInterrupted()) {
+            pauseLocal(); say("输入法在确认文字前断开，已暂停。请核对草稿后重新开始。",true);
+        }
+        save(); updateControls(); handler.removeCallbacks(flush);
+        if (tracker.hasConflict()) {
+            say("已修改已输入或待确认的前缀，已暂停。电脑原文不会删除；请核对后重置。",true);
+        } else if (resumed && tracker.isActive() && !busy) {
+            // Coalesce within this UI turn; commit state comes from InputConnection, never elapsed time.
+            handler.post(flush);
+        }
+    }
+    private void pauseLocal() {
+        activationEpoch++; tracker.pause(); handler.removeCallbacks(flush); updateControls();
+    }
+    private void toggleStart() {
+        if (destroyed || !resumed) return;
+        if (tracker.isActive()) {
+            pauseLocal(); save();
+            say(busy ? "已暂停后续输入；已发出的这条请求仍可能完成，请等待确认。" : "已暂停 · 再次开始时会重新确认电脑窗口",false);
+            return;
+        }
+        if (busy) return;
+        if (tracker.pending() != null || tracker.isSaved() || tracker.hasConflict()) return;
+        if (!tracker.unsentForReset().isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("开始自动输入")
+                .setMessage("开始后，草稿中尚未输入的文字会自动进入电脑当前输入框。请先核对电脑内容并选中目标输入框。")
+                .setNegativeButton("取消",null).setPositiveButton("开始",(d,w)->beginSession()).show();
+        } else beginSession();
+    }
+    private void beginSession() {
+        if (busy || destroyed || !resumed) return;
+        pauseLocal(); final int attempt = activationEpoch;
+        final String address = host;
+        busy=true; updateControls(); say("正在确认电脑输入窗口…",false);
+        worker.execute(() -> {
+            try {
+                JSONObject result = client.session(address);
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy=false;
+                    if (!resumed || attempt != activationEpoch) { updateControls(); return; }
+                    Object session = result.opt("session");
+                    if (!Boolean.TRUE.equals(result.opt("ok")) || !(session instanceof String) || ((String)session).isEmpty()) {
+                        say(result.optString("note","电脑未建立输入会话，请检查接收端版本和目标输入框。"),true);
+                    } else if (tracker.start((String)session)) {
+                        say("正在输入 · 用手机输入法麦克风说话，确认文字后自动输入电脑",false);
+                        editor.requestFocus(); editor.setSelection(editor.length());
+                        ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(editor,InputMethodManager.SHOW_IMPLICIT);
+                        edited();
+                    }
+                    updateControls();
+                });
+            } catch (Exception e) {
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy=false; updateControls();
+                    if (attempt == activationEpoch) say("未能开始。请确认电脑接收端已启动、处于启用状态，并选中输入框。",true);
+                });
+            }
+        });
+    }
+    private void transmitCommitted() {
+        if (destroyed || !resumed || busy || !tracker.isActive()) return;
+        tracker.observe(editor.getText().toString(),editor.hasComposition(),editor.hasOpenEdit());
+        if (tracker.hasConflict()) { pauseLocal(); save(); return; }
+        if (tracker.unsentForReset().length() > 20000) {
+            pauseLocal(); save(); say("未输入文字超过 20000 字，请先分段整理草稿。",true); return;
+        }
+        CommitTracker.Pending pending = tracker.prepare(UUID.randomUUID().toString());
+        if (pending != null) dispatch(pending);
+    }
+    private void dispatch(CommitTracker.Pending pending) {
+        if (destroyed || busy || !resumed) return;
+        // Exact UUID, session, raw snapshot and transmitted text are durable BEFORE HTTPS.
+        if (!save()) { updateControls(); return; }
+        final JSONObject body;
+        try { body = message(pending); }
+        catch (Exception e) { pauseLocal(); uncertainHint(); return; }
+        final String address = host;
+        busy=true; updateControls(); say("正在输入电脑…",false);
+        worker.execute(() -> {
+            try {
+                JSONObject result = client.request(address,body);
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy=false;
+                    Object id = result.opt("id"), resultStatus = result.opt("status");
+                    boolean valid = id instanceof String && resultStatus instanceof String
+                        && tracker.receipt((String)id,Boolean.TRUE.equals(result.opt("ok")),(String)resultStatus);
+                    if (!valid) { pauseLocal(); save(); uncertainHint(); return; }
+                    save(); updateControls();
+                    if (tracker.isSaved()) {
+                        say(result.optString("note","电脑只保存了文字，未自动输入。") + " 请核对后保留并重置。",true);
+                    } else if (tracker.hasConflict()) {
+                        say("电脑已接收待确认文字，但手机前缀被改过。当前暂停，请核对并重置。",true);
+                    } else if (tracker.isActive() && resumed) {
+                        say("已交给电脑输入 · 可继续说话",false); handler.post(flush);
+                    } else say("待确认文字已交给电脑输入，当前仍暂停。",false);
+                });
+            } catch (Exception e) {
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy=false; pauseLocal(); save(); uncertainHint();
+                });
+            }
+        });
+    }
+    private void uncertainHint() {
+        updateControls();
+        if (tracker.pending() != null && tracker.pending().session.isEmpty())
+            say("保留了旧版待确认文字。请先核对电脑是否已有，再点“保留并重置”；不会自动重发。",true);
+        else say("这条文字是否已输入尚未确认。点“重试确认”沿用原编号；不要重新输入同一段。",true);
+    }
+    private void retryPending() {
+        if (busy || destroyed || !resumed || tracker.pending() == null || tracker.pending().session.isEmpty()) return;
+        pauseLocal();
+        new AlertDialog.Builder(this).setTitle("重试确认同一条文字")
+            .setMessage("将沿用原编号和原输入会话。电脑若已处理，会返回原结果；若会话已失效，只保存文字。确认后仍保持暂停。")
+            .setNegativeButton("取消",null).setPositiveButton("重试确认",(d,w)-> {
+                if (tracker.pending() != null) dispatch(tracker.pending());
+            }).show();
+    }
+    private void newDraft() {
+        if (busy || destroyed) return;
+        pauseLocal();
+        if (tracker.pending() != null) {
+            new AlertDialog.Builder(this).setTitle("先核对电脑内容")
+                .setMessage("这条文字可能已经输入。建议先重试确认。若无法确认，请在电脑逐字核对，再选择：已有则只保留后续文字；没有则保留全部未输入文字。")
+                .setNegativeButton("取消",null)
+                .setNeutralButton("电脑已有这条",(d,w)-> {
+                    CommitTracker.Pending pending = tracker.pending();
+                    String draft = tracker.draft();
+                    if (!draft.startsWith(pending.snapshot)) {
+                        say("手机前缀已改动，无法自动区分。请先把前缀恢复为待确认原文，再核对重置。",true); return;
+                    }
+                    resetDraft(draft.substring(pending.snapshot.length()));
+                })
+                .setPositiveButton("电脑没有，保留",(d,w)->resetDraft(tracker.unsentForReset())).show();
+        } else if (tracker.isSaved() || tracker.hasConflict() || !tracker.unsentForReset().isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("保留文字，重新开始一段")
+                .setMessage(tracker.hasConflict()
+                    ? "已输入部分被修改，电脑原文仍在。将保留整份草稿作为新一段；再次开始前请手动删去草稿中不需重复输入的部分。"
+                    : "将保留尚未输入的文字并重置状态。核对电脑输入框后，需要再点开始才会输入。")
+                .setNegativeButton("取消",null).setPositiveButton("保留并重置",(d,w)->resetDraft(tracker.unsentForReset())).show();
+        } else resetDraft("");
+    }
+    private void resetDraft(String retained) {
+        if (destroyed || busy) return;
+        loading=true; tracker.reset(retained); legacyPendingRaw="";
+        editor.setText(retained); editor.setSelection(editor.length()); loading=false;
+        save(); updateControls(); say("已暂停，新一段已准备好。核对电脑输入框后再点开始。",false);
+        editor.requestFocus();
+    }
+    private void editAddress() {
+        if (busy || tracker.pending() != null) { say("请先处理待确认文字，再修改电脑地址。",true); return; }
+        pauseLocal();
+        EditText address=new EditText(this); address.setSingleLine(true); address.setText(host);
+        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        new AlertDialog.Builder(this).setTitle("电脑局域网地址").setView(address)
+            .setNegativeButton("取消",null).setPositiveButton("连接",(dialog,which)-> {
+                String value=address.getText().toString().trim();
+                if (!value.matches("[A-Za-z0-9.-]+")) { say("只填写 IP 或主机名，例如 192.168.1.100",true); return; }
+                host=value; destination.setText("电脑  " + host + "   ›"); save(); health();
+            }).show();
+    }
+    private void health() {
+        final String address=host;
+        worker.execute(() -> {
+            try {
+                JSONObject result=client.request(address,null);
+                handler.post(() -> {
+                    if (destroyed || busy || tracker.isActive() || tracker.pending()!=null || tracker.isSaved() || tracker.hasConflict()) return;
+                    if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2)
+                        say("电脑接收端需要更新到远程键盘版本。",true);
+                    else say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                });
+            } catch(Exception e) {
+                handler.post(() -> {
+                    if (!destroyed && !busy && !tracker.isActive() && tracker.pending()==null && !tracker.isSaved() && !tracker.hasConflict())
+                        say("暂未连接 · 请确认电脑接收端已启动、两端在同一局域网",true);
+                });
+            }
+        });
+    }
+    @Override public void onResume() { super.onResume(); resumed=true; if(tracker!=null) updateControls(); }
+    @Override public void onPause() {
+        resumed=false;
+        if (tracker!=null) { pauseLocal(); save(); say("已暂停 · 回到前台后请重新点开始",false); }
+        super.onPause();
+    }
+    @Override public void onDestroy() {
+        destroyed=true; handler.removeCallbacksAndMessages(null); worker.shutdown(); super.onDestroy();
+    }
+}
