@@ -6,11 +6,11 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['pystray._win32'],
+    hiddenimports=['pystray._win32', 'qrcode'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['cryptography'],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

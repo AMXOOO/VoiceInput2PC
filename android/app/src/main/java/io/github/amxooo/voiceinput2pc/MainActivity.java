@@ -2,6 +2,7 @@ package io.github.amxooo.voiceinput2pc;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -27,6 +28,8 @@ public class MainActivity extends Activity {
     private CommitEditText editor;
     private TextView status, destination, counter;
     private Button start, fresh, retry;
+    private Button pairingButton;
+    private EditText pairingInput;
     private SharedPreferences prefs;
     private RelayTransport client;
     private CommitTracker tracker;
@@ -52,15 +55,122 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences("voiceinput2pc", MODE_PRIVATE);
+        PairingConfig pairing = PairingStore.load(prefs);
+        String incoming = incomingPairing(getIntent());
+        if (incoming != null) {
+            showPairingScreen("正在读取电脑配对码…");
+            pairingInput.setText(incoming);
+            importPairing(incoming);
+        } else if (pairing == null) {
+            showPairingScreen("请先在电脑接收端打开“配对手机”。");
+        } else {
+            showTypingScreen(pairing);
+        }
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String incoming = incomingPairing(intent);
+        if (incoming != null) {
+            if (tracker != null) { pauseLocal(); save(); }
+            showPairingScreen("正在读取电脑配对码…");
+            pairingInput.setText(incoming);
+            importPairing(incoming);
+        }
+    }
+
+    private String incomingPairing(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())
+                || intent.getData() == null) return null;
+        return intent.getData().toString();
+    }
+
+    private void showPairingScreen(String message) {
+        setTitle("连接电脑");
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(22), dp(28), dp(22), dp(18));
+        layout.setBackgroundColor(Color.rgb(247,248,244));
+        TextView title = label("连接电脑", 28, Color.rgb(31,48,43));
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        layout.addView(title, row(-2));
+        TextView guide = label("在电脑接收端点击“配对手机”，用系统相机扫描二维码；也可以复制完整配对码后粘贴到下面。",
+                15, Color.DKGRAY);
+        guide.setPadding(0, dp(10), 0, dp(16));
+        layout.addView(guide, row(-2));
+        pairingInput = new EditText(this);
+        pairingInput.setHint("粘贴 voiceinput2pc:// 开头的完整配对码");
+        pairingInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_VARIATION_URI);
+        pairingInput.setMinLines(4);
+        pairingInput.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        layout.addView(pairingInput, new LinearLayout.LayoutParams(-1, 0, 1));
+        status = label(message, 14, green);
+        status.setPadding(0, dp(12), 0, dp(8));
+        layout.addView(status, row(-2));
+        pairingButton = new Button(this);
+        pairingButton.setText("导入并连接");
+        pairingButton.setTextColor(Color.WHITE);
+        pairingButton.setBackgroundTintList(ColorStateList.valueOf(green));
+        pairingButton.setOnClickListener(v -> importPairing(pairingInput.getText().toString().trim()));
+        layout.addView(pairingButton, row(58));
+        TextView safety = label("配对码相当于连接密码，只在自己的手机和电脑之间使用。应用不需要麦克风或相机权限。",
+                12, Color.GRAY);
+        safety.setPadding(0, dp(12), 0, 0);
+        layout.addView(safety, row(-2));
+        setContentView(layout);
+    }
+
+    private void importPairing(String raw) {
+        final PairingConfig candidate;
         try {
-            JSONObject pairing;
-            try (java.io.InputStream stream = getAssets().open("pairing.json")) {
-                pairing = new JSONObject(RelayClient.read(stream));
+            candidate = PairingCodec.decode(raw);
+        } catch (IllegalArgumentException invalid) {
+            say("配对码无效，请重新扫描或完整粘贴。原有连接没有改变。", true);
+            return;
+        }
+        pairingButton.setEnabled(false);
+        say("正在核对电脑身份和连接凭据…", false);
+        worker.execute(() -> {
+            try {
+                RelayTransport candidateClient = new RelayClient(candidate);
+                JSONObject result = candidateClient.request(candidate.host, null);
+                if (!Boolean.TRUE.equals(result.opt("ok"))
+                        || !"VoiceInput2PC".equals(result.optString("app"))
+                        || result.optInt("protocol") != 2) {
+                    throw new Exception("接收端版本不兼容");
+                }
+                handler.post(() -> {
+                    if (destroyed) return;
+                    if (!PairingStore.save(prefs, candidate)) {
+                        pairingButton.setEnabled(true);
+                        say("手机无法保存连接配置，请检查存储空间后重试。", true);
+                        return;
+                    }
+                    client = candidateClient;
+                    showTypingScreen(candidate);
+                    say(result.optBoolean("paused")
+                            ? "已连接 · 请先在电脑启用输入，再选中输入框"
+                            : "已连接 · 先选中电脑输入框，再点开始", false);
+                });
+            } catch (Exception failure) {
+                handler.post(() -> {
+                    if (destroyed || pairingButton == null) return;
+                    pairingButton.setEnabled(true);
+                    say("没有通过电脑验证。请确认接收端已启动，再重新扫描；原有连接没有改变。", true);
+                });
             }
-            host = prefs.getString("host", pairing.getString("host"));
+        });
+    }
+
+    private void showTypingScreen(PairingConfig pairing) {
+        setTitle("语音输入电脑");
+        try {
+            host = prefs.getString("host", pairing.host);
             client = new RelayClient(pairing);
-        } catch (Exception exc) {
-            setContentView(label("连接配置缺失，请重新安装这台电脑配套的 APK。",18,Color.DKGRAY));
+        } catch (Exception invalid) {
+            showPairingScreen("保存的连接配置无法使用，请重新配对。");
             return;
         }
         String draft = prefs.getString("draft", ""), sent = prefs.getString("sent", "");
@@ -90,9 +200,17 @@ public class MainActivity extends Activity {
         });
         TextView title = label("语音输入电脑",28,Color.rgb(31,48,43));
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); layout.addView(title,row(-2));
-        destination = label("电脑  " + host + "   ›",13,Color.DKGRAY);
+        destination = label("电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
         destination.setPadding(0,dp(6),0,dp(10));
-        destination.setOnClickListener(v -> editAddress()); layout.addView(destination,row(-2));
+        destination.setOnClickListener(v -> {
+            if (busy || tracker.pending() != null) {
+                say("请先处理待确认文字，再更换电脑。", true);
+                return;
+            }
+            pauseLocal(); save();
+            showPairingScreen("请扫描新电脑接收端显示的二维码。");
+        });
+        layout.addView(destination,row(-2));
         status = label("已暂停 · 先选中电脑输入框，再点开始",14,green);
         layout.addView(status,row(-2));
         editor = new CommitEditText(this);
@@ -321,18 +439,6 @@ public class MainActivity extends Activity {
         editor.setText(retained); editor.setSelection(editor.length()); loading=false;
         save(); updateControls(); say("已暂停，新一段已准备好。核对电脑输入框后再点开始。",false);
         editor.requestFocus();
-    }
-    private void editAddress() {
-        if (busy || tracker.pending() != null) { say("请先处理待确认文字，再修改电脑地址。",true); return; }
-        pauseLocal();
-        EditText address=new EditText(this); address.setSingleLine(true); address.setText(host);
-        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        new AlertDialog.Builder(this).setTitle("电脑局域网地址").setView(address)
-            .setNegativeButton("取消",null).setPositiveButton("连接",(dialog,which)-> {
-                String value=address.getText().toString().trim();
-                if (!value.matches("[A-Za-z0-9.-]+")) { say("只填写 IP 或主机名，例如 192.168.1.100",true); return; }
-                host=value; destination.setText("电脑  " + host + "   ›"); save(); health();
-            }).show();
     }
     private void health() {
         final String address=host;

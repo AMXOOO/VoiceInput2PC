@@ -16,10 +16,14 @@ public final class LiveRelayTest extends ActivityInstrumentationTestCase2<MainAc
         android.os.Bundle arguments=((InstrumentationTestRunner)getInstrumentation()).getArguments();
         boolean preview="true".equals(arguments.getString("preview"));
         if (!"true".equals(arguments.getString("live")) && !preview) return;
-        String host=arguments.getString("host");
-        if (host == null || host.trim().isEmpty()) fail("Pass the target PC with -e host <address>");
-        getInstrumentation().getTargetContext().getSharedPreferences("voiceinput2pc",0).edit()
-            .clear().putString("host",host).commit();
+        String pairingUri=arguments.getString("pairing");
+        if (pairingUri == null || pairingUri.trim().isEmpty())
+            fail("Pass a private pairing URI with -e pairing <uri>");
+        PairingConfig pairing=PairingCodec.decode(pairingUri);
+        android.content.SharedPreferences preferences=getInstrumentation().getTargetContext()
+            .getSharedPreferences("voiceinput2pc",0);
+        preferences.edit().clear().commit();
+        assertTrue(PairingStore.save(preferences,pairing));
         MainActivity activity=getActivity();
         if (preview) return; // Prepare a clean paused screenshot; GET /health only, never activate.
         Button start=(Button)field(activity,"start");

@@ -9,6 +9,7 @@ import threading
 import tempfile
 import datetime
 import sqlite3
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
@@ -16,6 +17,8 @@ import pystray
 from PIL import Image, ImageDraw
 from receiver.core import Relay
 from receiver.http_server import make_server
+from receiver.first_run import run_first_setup, show_pairing
+from receiver.pairing import load_pairing, prepare_receiver
 from receiver.win_input import type_text, capture_target, copy_text
 
 
@@ -74,13 +77,21 @@ def main():
     root.geometry('680x470')
     root.protocol('WM_DELETE_WINDOW', root.withdraw)
     stage, port = '读取配置', None
+    first_setup = False
     try:
-        config = json.loads((folder / 'config.json').read_text(encoding='utf-8'))
-        port = config['port']
+        if not (folder / 'config.json').is_file():
+            stage = '首次设置'
+            if not run_first_setup(root, folder, Path(sys.executable)):
+                root.destroy()
+                kernel.CloseHandle(mutex)
+                return
+            first_setup = True
+        current_pairing = load_pairing(folder)
+        port = current_pairing.port
         stage = '打开本机消息记录'
         relay = Relay(folder / 'messages.db', type_text, target_provider=capture_target)
         stage = '启动监听'
-        server = make_server(('0.0.0.0', config['port']), relay, config['token'],
+        server = make_server(('0.0.0.0', current_pairing.port), relay, current_pairing.token,
                              folder / 'cert.pem', folder / 'key.pem')
     except Exception as exc:
         detail = startup_error_message(exc, stage, folder, port)
@@ -154,7 +165,39 @@ def main():
     buttons.pack(fill='x')
     ttk.Button(buttons, text='复制选中文字', command=copy_selected).pack(side='left')
     ttk.Button(buttons, text='刷新', command=refresh).pack(side='left', padx=8)
+    ttk.Button(buttons, text='配对手机', command=lambda: open_pairing()).pack(side='left')
     ttk.Button(buttons, text='收起到托盘', command=root.withdraw).pack(side='right')
+
+    def regenerate_pairing():
+        nonlocal server, current_pairing, port
+        previous_pause = relay.paused
+        relay.paused = True
+        status.config(text='正在更换配对码…')
+        root.update_idletasks()
+        server.shutdown()
+        server.server_close()
+        try:
+            current_pairing = prepare_receiver(
+                folder, current_pairing.host, current_pairing.port, regenerate=True)
+            port = current_pairing.port
+            server = make_server(('0.0.0.0', current_pairing.port), relay,
+                                 current_pairing.token, folder / 'cert.pem', folder / 'key.pem')
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        except Exception as exc:
+            detail = startup_error_message(exc, '更换配对码', folder, port)
+            status.config(text='更换配对码失败，请退出后重新打开接收端')
+            messagebox.showerror('语音输入电脑', detail, parent=root)
+            return
+        finally:
+            relay.paused = previous_pause
+            icon.update_menu()
+        refresh()
+        show_pairing(root, current_pairing, allow_regenerate=True,
+                     on_regenerate=regenerate_pairing)
+
+    def open_pairing():
+        show_pairing(root, current_pairing, allow_regenerate=True,
+                     on_regenerate=regenerate_pairing)
 
     def handle_command(command):
         if command == 'show':
@@ -178,6 +221,10 @@ def main():
 
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=icon.run, daemon=True).start()
+    if first_setup:
+        root.after(250, lambda: show_pairing(
+            root, current_pairing, allow_regenerate=True,
+            on_regenerate=regenerate_pairing))
     try:
         Path(args.diagnostic_report).write_text(json.dumps({
             'time': datetime.datetime.now().isoformat(), 'ok': True,

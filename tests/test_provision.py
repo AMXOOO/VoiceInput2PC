@@ -74,6 +74,21 @@ class ProvisionTests(unittest.TestCase):
             self.assertNotIn(config['token'], output.getvalue())
             self.assertNotIn(config['fingerprint'], output.getvalue())
 
+    def test_cli_without_asset_only_creates_receiver_configuration(self):
+        module = load_provision_module()
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            public_asset = ROOT / 'android/app/src/main/assets/pairing.json'
+            self.assertFalse(public_asset.exists())
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                module.main(['--host', '192.0.2.10', '--config-dir', str(base / 'config')])
+
+            self.assertTrue((base / 'config' / 'config.json').is_file())
+            self.assertEqual([], list(base.glob('pairing.json')))
+            self.assertFalse(public_asset.exists())
+            self.assertIn('credentials were not printed', output.getvalue().lower())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -17,10 +17,11 @@ public final class RelayClient implements RelayTransport {
     private final int port;
     private final SSLContext context;
 
-    public RelayClient(JSONObject pairing) throws Exception {
-        token = pairing.getString("token");
-        port = pairing.getInt("port");
-        final String fingerprint = pairing.getString("fingerprint");
+    public RelayClient(PairingConfig pairing) throws Exception {
+        if (pairing == null) throw new IllegalArgumentException("连接配置缺失");
+        token = pairing.token;
+        port = pairing.port;
+        final String fingerprint = pairing.fingerprint;
         context = SSLContext.getInstance("TLS");
         context.init(null, new TrustManager[]{new X509TrustManager() {
             public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }

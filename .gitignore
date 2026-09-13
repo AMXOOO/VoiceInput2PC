@@ -27,6 +27,7 @@ private/
 .env
 .env.*
 !.env.example
+release/output/
 
 # Local development notes and personal acceptance records.
 PLAN.md

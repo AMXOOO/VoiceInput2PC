@@ -1,3 +1,5 @@
+import os
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -40,10 +42,16 @@ class PublicIdentityTests(unittest.TestCase):
         readme = (ROOT / 'README.md').read_text(encoding='utf-8')
         for phrase in (
                 'VoiceInput2PC', '手机语音输入电脑', '安卓手机输入法',
-                'Windows 当前光标', '源码预览版', '不使用电脑麦克风',
+                'Windows 当前光标', '下载成品', '不使用电脑麦克风',
                 '不占用剪贴板', '不会自动按回车', 'Android 8',
-                'Windows 10/11', 'scripts/provision.py --host'):
+                'Windows 10/11', 'VoiceInput2PC-Android-v0.3.0.apk',
+                'VoiceInput2PC-Windows-v0.3.0.zip',
+                'https://github.com/AMXOOO/VoiceInput2PC/releases/latest',
+                '系统相机', 'SmartScreen', '安装未知应用', '专用网络'):
             self.assertIn(phrase, readme)
+        self.assertLess(readme.index('## 下载成品'), readme.index('## 从源码开始'))
+        self.assertNotIn('源码预览版', readme)
+        self.assertNotIn('暂不提供通用', readme)
 
         license_text = (ROOT / 'LICENSE').read_text(encoding='utf-8')
         self.assertIn('MIT License', license_text)
@@ -53,6 +61,9 @@ class PublicIdentityTests(unittest.TestCase):
         self.assertIn('pairing.json', security)
         self.assertIn('私钥', security)
         self.assertIn('令牌', security)
+        self.assertIn('二维码', security)
+        self.assertIn('相当于密码', security)
+        self.assertIn('换一组配对码', security)
 
     def test_generated_and_private_files_are_ignored(self):
         ignore = (ROOT / '.gitignore').read_text(encoding='utf-8')
@@ -63,8 +74,42 @@ class PublicIdentityTests(unittest.TestCase):
 
     def test_public_source_has_no_personal_network_defaults(self):
         live_test = (ROOT / 'android/app/src/androidTest/java/io/github/amxooo/voiceinput2pc/LiveRelayTest.java').read_text(encoding='utf-8')
-        self.assertNotIn('arguments.getString("host",', live_test)
-        self.assertIn('arguments.getString("host")', live_test)
+        self.assertNotIn('arguments.getString("pairing",', live_test)
+        self.assertIn('arguments.getString("pairing")', live_test)
+
+
+class ReleaseBuildTests(unittest.TestCase):
+    def test_public_app_has_no_bundled_private_pairing(self):
+        self.assertFalse((ROOT / 'android/app/src/main/assets/pairing.json').exists())
+        source = (ROOT / 'android/app/src/main/java/io/github/amxooo/voiceinput2pc/MainActivity.java').read_text(encoding='utf-8')
+        self.assertNotIn('getAssets().open("pairing.json")', source)
+
+    def test_release_output_and_names_are_explicit(self):
+        ignore = (ROOT / '.gitignore').read_text(encoding='utf-8')
+        script = (ROOT / 'scripts/build_public_release.ps1').read_text(encoding='utf-8')
+        self.assertIn('release/output/', ignore)
+        for name in ('VoiceInput2PC-Android-v0.3.0.apk',
+                     'VoiceInput2PC-Windows-v0.3.0.zip', 'SHA256SUMS.txt'):
+            self.assertIn(name, script)
+
+    def test_release_signing_comes_only_from_required_environment(self):
+        build = (ROOT / 'android/app/build.gradle').read_text(encoding='utf-8')
+        for name in ('VOICEINPUT2PC_KEYSTORE', 'VOICEINPUT2PC_STORE_PASSWORD',
+                     'VOICEINPUT2PC_KEY_ALIAS', 'VOICEINPUT2PC_KEY_PASSWORD'):
+            self.assertIn(name, build)
+
+    def test_build_script_refuses_missing_signing_environment(self):
+        script = ROOT / 'scripts/build_public_release.ps1'
+        environment = os.environ.copy()
+        for name in ('VOICEINPUT2PC_KEYSTORE', 'VOICEINPUT2PC_STORE_PASSWORD',
+                     'VOICEINPUT2PC_KEY_ALIAS', 'VOICEINPUT2PC_KEY_PASSWORD'):
+            environment.pop(name, None)
+        result = subprocess.run(
+            ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+             '-File', str(script), '-ValidateOnly'],
+            cwd=ROOT, env=environment, text=True, capture_output=True, timeout=20)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('VOICEINPUT2PC_KEYSTORE', result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

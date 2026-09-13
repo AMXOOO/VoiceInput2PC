@@ -1,6 +1,8 @@
 package io.github.amxooo.voiceinput2pc;
 
 import android.content.SharedPreferences;
+import android.content.Intent;
+import android.net.Uri;
 import android.test.ActivityInstrumentationTestCase2;
 import android.view.View;
 import android.view.WindowManager;
@@ -22,7 +24,13 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         super.setUp();
         prefs=getInstrumentation().getTargetContext().getSharedPreferences("voiceinput2pc",0);
         // This suite is run only in the dedicated test emulator and cannot reach the PC.
-        prefs.edit().clear().putString("host","127.0.0.1").commit();
+        prefs.edit().clear().commit();
+        assertTrue(PairingStore.save(prefs, testPairing()));
+    }
+    private PairingConfig testPairing() {
+        return new PairingConfig("127.0.0.1",23337,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "abababababababababababababababababababababababababababababababab");
     }
     @Override protected void tearDown() throws Exception {
         try {
@@ -91,6 +99,22 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         ui(()->invoke("beginSession",new Class<?>[]{}));
         waitFor(()->tracker().isActive());
         return transport;
+    }
+    public void testEmptyPreferencesShowPairingScreen() throws Exception {
+        prefs.edit().clear().commit();
+        activity=getActivity();
+        assertNull(field("tracker"));
+        assertNotNull(field("pairingInput"));
+        assertTrue(activity.getTitle().toString().contains("连接电脑"));
+    }
+    public void testMalformedViewIntentNeverReplacesStoredPairing() throws Exception {
+        PairingConfig original=PairingStore.load(prefs);
+        setActivityIntent(new Intent(Intent.ACTION_VIEW,
+            Uri.parse("voiceinput2pc://pair?p=bad")));
+        activity=getActivity();
+        getInstrumentation().waitForIdleSync();
+        assertEquals(original,PairingStore.load(prefs));
+        assertNotNull(field("pairingInput"));
     }
     public void testCommitIsAutomaticAndDurableBeforeRequest() throws Exception {
         Transport transport=startWithTransport();
