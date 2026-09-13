@@ -1,4 +1,5 @@
 .venv/
+.worktrees/
 *.py[cod]
 *.class
 tests/java-build/
