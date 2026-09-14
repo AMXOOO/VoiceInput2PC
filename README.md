@@ -8,12 +8,12 @@ VoiceInput2PC 不传输麦克风声音，也不自己做语音识别。它只负
 
 打开 [GitHub 最新版本下载页](https://github.com/AMXOOO/VoiceInput2PC/releases/latest)，下载这两个文件：
 
-- `VoiceInput2PC-Windows-v0.3.0.zip`：Windows 电脑接收端；
+- `VoiceInput2PC-Windows-v0.3.1.zip`：Windows 电脑接收端；
 - `VoiceInput2PC-Android-v0.3.0.apk`：安卓手机端。
 
 第一次使用只需四步：
 
-1. 解压 Windows 压缩包，双击 `VoiceInput2PCReceiver.exe`。首次启动选择电脑地址，通常保持默认即可。
+1. Windows 端是免安装便携版，不是安装程序。请完整解压压缩包，保留 `_internal` 文件夹，再双击 `VoiceInput2PCReceiver.exe`；不要把 EXE 单独复制出来运行。首次启动选择电脑地址，通常保持默认即可。
 2. Windows 弹出防火墙提示时，只允许“专用网络”，不要允许公共网络。接收端会显示配对二维码。
 3. 安卓手机安装 APK，用系统相机扫描二维码并选择用 VoiceInput2PC 打开；也可复制完整配对码，在手机应用中粘贴后导入。
 4. 在电脑上点中要输入的位置，手机上点“开始输入到电脑”，再使用安卓手机输入法的语音按钮。
@@ -80,8 +80,11 @@ py -3 -m venv .venv
 运行 Windows 接收端：
 
 ```powershell
-.\.venv\Scripts\python.exe receiver_app.py --show
+.\.venv\Scripts\python.exe receiver_app.py
 ```
+
+手动启动默认显示状态窗口；只有开机启动等无人值守场景才使用
+`--background` 收起到系统托盘。程序已运行时再次手动启动，会把已有窗口调到前台。
 
 首次启动会在 `%LOCALAPPDATA%\VoiceInput2PC` 生成本机令牌、证书和私钥，并显示二维码。也可用 `scripts/provision.py --host 192.168.1.20` 进行无界面配置；示例地址必须替换为实际地址，默认不会生成安卓资产文件。
 

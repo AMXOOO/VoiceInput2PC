@@ -7,6 +7,44 @@ import receiver_app
 
 
 class StartupMessageTests(unittest.TestCase):
+    def test_manual_launch_is_visible_and_only_background_launch_stays_hidden(self):
+        self.assertTrue(receiver_app.should_show_main_window())
+        self.assertTrue(receiver_app.should_show_main_window(show=True))
+        self.assertTrue(receiver_app.should_show_main_window(background=True, first_setup=True))
+        self.assertFalse(receiver_app.should_show_main_window(background=True))
+
+    def test_second_launch_prefers_visible_workflow_dialog_then_restores_it(self):
+        class FakeUser32:
+            def __init__(self):
+                self.lookups = []
+                self.shown = []
+                self.foreground = []
+
+            def FindWindowW(self, _class_name, title):
+                self.lookups.append(title)
+                return 101 if title == receiver_app.FIRST_RUN_TITLE else 0
+
+            def ShowWindow(self, window, command):
+                self.shown.append((window, command))
+                return True
+
+            def SetForegroundWindow(self, window):
+                self.foreground.append(window)
+                return True
+
+        user32 = FakeUser32()
+        self.assertTrue(receiver_app.activate_existing_window(user32))
+        self.assertEqual([receiver_app.FIRST_RUN_TITLE], user32.lookups)
+        self.assertEqual([(101, receiver_app.SW_RESTORE)], user32.shown)
+        self.assertEqual([101], user32.foreground)
+
+    def test_second_launch_reports_when_no_receiver_window_exists(self):
+        class FakeUser32:
+            def FindWindowW(self, _class_name, _title):
+                return 0
+
+        self.assertFalse(receiver_app.activate_existing_window(FakeUser32()))
+
     def test_unreadable_history_returns_error_not_exception(self):
         from receiver.core import Relay
         with tempfile.TemporaryDirectory() as folder:

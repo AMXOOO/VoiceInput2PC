@@ -22,6 +22,14 @@ from receiver.pairing import load_pairing, prepare_receiver
 from receiver.win_input import type_text, capture_target, copy_text
 
 
+APP_VERSION = '0.3.1'
+APP_TITLE = '语音输入电脑 · 电脑接收端'
+FIRST_RUN_TITLE = '语音输入电脑 · 首次设置'
+PAIRING_TITLE = '语音输入电脑 · 配对手机'
+ERROR_ALREADY_EXISTS = 183
+SW_RESTORE = 9
+
+
 def read_history(relay):
     try:
         return relay.recent(), ''
@@ -52,10 +60,40 @@ def startup_error_message(exc, stage, folder, port):
     return '\n'.join(lines)
 
 
+def should_show_main_window(background=False, show=False, first_setup=False):
+    """Manual launches are visible; only explicit background launches stay in the tray."""
+    return first_setup or show or not background
+
+
+def _load_user32():
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    return user32
+
+
+def activate_existing_window(user32=None):
+    """Reveal the active setup, pairing, or main window for a second manual launch."""
+    user32 = user32 or _load_user32()
+    for title in (FIRST_RUN_TITLE, PAIRING_TITLE, APP_TITLE):
+        window = user32.FindWindowW(None, title)
+        if window:
+            user32.ShowWindow(window, SW_RESTORE)
+            user32.SetForegroundWindow(window)
+            return True
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config-dir', default=str(Path(os.environ['LOCALAPPDATA']) / 'VoiceInput2PC'))
-    parser.add_argument('--show', action='store_true')
+    parser.add_argument('--show', action='store_true', help='show the receiver window (kept for compatibility)')
+    parser.add_argument('--background', action='store_true', help='start in the notification area')
+    parser.add_argument('--version', action='version', version=f'VoiceInput2PCReceiver {APP_VERSION}')
     parser.add_argument('--diagnostic-report', default=str(Path(tempfile.gettempdir()) / 'VoiceInput2PC-startup.json'))
     args = parser.parse_args()
     folder = Path(args.config_dir)
@@ -68,12 +106,14 @@ def main():
     mutex = kernel.CreateMutexW(None, False, 'Local\\VoiceInput2PC-' + identity)
     if not mutex:
         return
-    if ctypes.get_last_error() == 183:
+    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+        if not args.background:
+            activate_existing_window()
         kernel.CloseHandle(mutex)
         return
     root = tk.Tk()
     root.withdraw()
-    root.title('语音输入电脑 · 电脑接收端')
+    root.title(APP_TITLE)
     root.geometry('680x470')
     root.protocol('WM_DELETE_WINDOW', root.withdraw)
     stage, port = '读取配置', None
@@ -204,6 +244,7 @@ def main():
             refresh()
             root.deiconify()
             root.lift()
+            root.focus_force()
         elif command == 'pause':
             relay.paused = not relay.paused
             icon.update_menu()
@@ -221,6 +262,8 @@ def main():
 
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=icon.run, daemon=True).start()
+    if should_show_main_window(args.background, args.show, first_setup):
+        commands.put('show')
     if first_setup:
         root.after(250, lambda: show_pairing(
             root, current_pairing, allow_regenerate=True,
@@ -231,8 +274,6 @@ def main():
             'config_dir': str(folder), 'port': port}, ensure_ascii=False), encoding='utf-8')
     except OSError:
         pass
-    if args.show:
-        commands.put('show')
     poll()
     root.mainloop()
     server.server_close()

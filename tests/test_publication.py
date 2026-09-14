@@ -34,6 +34,16 @@ class PublicIdentityTests(unittest.TestCase):
         self.assertTrue((ROOT / 'VoiceInput2PCReceiver.spec').is_file())
         self.assertFalse((ROOT / 'PocketTypeReceiver.spec').exists())
 
+    def test_windows_receiver_has_version_metadata_and_disables_upx(self):
+        spec = (ROOT / 'VoiceInput2PCReceiver.spec').read_text(encoding='utf-8')
+        version = (ROOT / 'windows_version_info.txt').read_text(encoding='utf-8')
+        self.assertIn("version='windows_version_info.txt'", spec)
+        self.assertIn('exclude_binaries=True', spec)
+        self.assertIn('coll = COLLECT(', spec)
+        self.assertIn('upx=False', spec)
+        self.assertIn("StringStruct('ProductVersion', '0.3.1')", version)
+        self.assertIn("StringStruct('CompanyName', 'AMXOOO')", version)
+
     def test_public_documentation_explains_scope_and_safety(self):
         required = ('README.md', 'LICENSE', 'SECURITY.md', '.gitignore')
         for name in required:
@@ -45,9 +55,11 @@ class PublicIdentityTests(unittest.TestCase):
                 'Windows 当前光标', '下载成品', '不使用电脑麦克风',
                 '不占用剪贴板', '不会自动按回车', 'Android 8',
                 'Windows 10/11', 'VoiceInput2PC-Android-v0.3.0.apk',
-                'VoiceInput2PC-Windows-v0.3.0.zip',
+                'VoiceInput2PC-Windows-v0.3.1.zip',
                 'https://github.com/AMXOOO/VoiceInput2PC/releases/latest',
-                '系统相机', 'SmartScreen', '安装未知应用', '专用网络'):
+                '系统相机', 'SmartScreen', '安装未知应用', '专用网络',
+                '免安装便携版', '保留 `_internal` 文件夹',
+                '不要把 EXE 单独复制出来运行'):
             self.assertIn(phrase, readme)
         self.assertLess(readme.index('## 下载成品'), readme.index('## 从源码开始'))
         self.assertNotIn('源码预览版', readme)

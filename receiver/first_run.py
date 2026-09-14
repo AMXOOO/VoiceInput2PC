@@ -24,6 +24,7 @@ from receiver.pairing import (
 
 AUTOSTART_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 AUTOSTART_NAME = 'VoiceInput2PC'
+BACKGROUND_ARGUMENT = '--background'
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def choose_default_address(addresses) -> str:
 
 
 def autostart_command(executable: Path) -> str:
-    return '"' + str(Path(executable)) + '"'
+    return '"' + str(Path(executable)) + '" ' + BACKGROUND_ARGUMENT
 
 
 def pairing_view_model(pairing: Pairing) -> PairingViewModel:
@@ -71,7 +72,12 @@ class FirstRunDialog:
         self.window.title('语音输入电脑 · 首次设置')
         self.window.resizable(False, False)
         self.window.protocol('WM_DELETE_WINDOW', self.window.destroy)
-        self.window.transient(root)
+        # A transient window inherits the visibility of its owner on Windows.
+        # The receiver root is deliberately withdrawn until setup completes, so
+        # making this dialog transient would leave first-time users with a live
+        # process and no visible setup window.
+        if self.root.state() != 'withdrawn':
+            self.window.transient(root)
 
         frame = ttk.Frame(self.window, padding=22)
         frame.pack(fill='both', expand=True)
@@ -108,6 +114,14 @@ class FirstRunDialog:
         self.window.destroy()
 
     def run(self) -> bool:
+        self.window.update_idletasks()
+        width = self.window.winfo_reqwidth()
+        height = self.window.winfo_reqheight()
+        x = max(0, (self.window.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.window.winfo_screenheight() - height) // 2)
+        self.window.geometry(f'+{x}+{y}')
+        self.window.deiconify()
+        self.window.lift()
         self.window.grab_set()
         self.window.focus_force()
         self.root.wait_window(self.window)

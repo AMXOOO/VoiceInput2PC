@@ -16,7 +16,7 @@ class FirstRunTests(unittest.TestCase):
             '192.168.1.20',
             choose_default_address(['100.64.0.2', '10.0.0.8', '192.168.1.20']))
         self.assertEqual(
-            r'"C:\Program Files\VoiceInput2PCReceiver.exe"',
+            r'"C:\Program Files\VoiceInput2PCReceiver.exe" --background',
             autostart_command(Path(r'C:\Program Files\VoiceInput2PCReceiver.exe')))
 
         with tempfile.TemporaryDirectory() as folder:
