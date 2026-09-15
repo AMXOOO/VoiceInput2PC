@@ -28,7 +28,7 @@ def make_server(address, relay, token, certificate=None, private_key=None):
             super().process_request_thread(request, client_address)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = 'VoiceInput2PC/0.2'
+        server_version = 'VoiceInput2PC/0.4.0'
 
         def setup(self):
             super().setup()
@@ -52,14 +52,19 @@ def make_server(address, relay, token, certificate=None, private_key=None):
             return hmac.compare_digest(supplied.encode('utf-8'), ('Bearer ' + token).encode('utf-8'))
 
         def do_GET(self):
-            if not self.authorized():
-                self.reply(401, {'ok': False, 'note': '连接凭据不匹配'})
-            elif self.path == '/health':
-                self.reply(200, {'ok': True, 'app': 'VoiceInput2PC', 'paused': relay.paused, 'protocol': 2})
-            elif self.path == '/outbox':
-                self.reply(200, relay.phone_outbox())
-            else:
-                self.reply(404, {'ok': False})
+            try:
+                if not self.authorized():
+                    self.reply(401, {'ok': False, 'note': '连接凭据不匹配'})
+                elif self.path == '/health':
+                    self.reply(200, {'ok': True, 'app': 'VoiceInput2PC', 'paused': relay.paused, 'protocol': 2})
+                elif self.path == '/outbox':
+                    self.reply(200, relay.phone_outbox())
+                else:
+                    self.reply(404, {'ok': False})
+            except (TimeoutError, BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+            except Exception:
+                self.reply(500, {'ok': False, 'note': '接收异常，请保留草稿并重试'})
 
         def do_POST(self):
             if not self.authorized():

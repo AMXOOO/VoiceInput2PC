@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     private RelayTransport client;
     private CommitTracker tracker;
     private String host, legacyPendingRaw = "";
-    private boolean busy, loading, destroyed, resumed, storageBlocked;
+    private boolean busy, loading, destroyed, resumed, storageBlocked, sendingText, receiveQueued;
     private int activationEpoch;
     private final int green = Color.rgb(22,112,91);
     private final Runnable flush = this::transmitCommitted;
@@ -281,8 +281,9 @@ public class MainActivity extends Activity {
         start.setEnabled(tracker.isActive() || (!busy && !storageBlocked && tracker.pending() == null && !tracker.isSaved() && !tracker.hasConflict()));
         fresh.setEnabled(!busy);
         fresh.setText(tracker.pending() != null || tracker.isSaved() || tracker.hasConflict() ? "保留并重置" : "新一段");
-        receive.setEnabled(!busy && !storageBlocked && tracker.pending() == null
-            && !tracker.isSaved() && !tracker.hasConflict());
+        boolean cleanForReceive = !storageBlocked && !tracker.isSaved() && !tracker.hasConflict();
+        receive.setEnabled((!busy && cleanForReceive && tracker.pending() == null)
+            || (sendingText && !receiveQueued && cleanForReceive && tracker.pending() != null));
         retry.setVisibility(tracker.pending() != null && !tracker.pending().session.isEmpty() ? View.VISIBLE : View.GONE);
         retry.setEnabled(!busy);
         counter.setText("电脑已接收输入 " + tracker.sent().codePointCount(0,tracker.sent().length())
@@ -358,7 +359,8 @@ public class MainActivity extends Activity {
         if (destroyed || !resumed || busy || !tracker.isActive()) return;
         tracker.observe(editor.getText().toString(),editor.hasComposition(),editor.hasOpenEdit());
         if (tracker.hasConflict()) { pauseLocal(); save(); return; }
-        if (tracker.unsentForReset().length() > 20000) {
+        String unsent = tracker.unsentForReset();
+        if (unsent.codePointCount(0,unsent.length()) > 20000) {
             pauseLocal(); save(); say("未输入文字超过 20000 字，请先分段整理草稿。",true); return;
         }
         CommitTracker.Pending pending = tracker.prepare(UUID.randomUUID().toString());
@@ -372,18 +374,23 @@ public class MainActivity extends Activity {
         try { body = message(pending); }
         catch (Exception e) { pauseLocal(); uncertainHint(); return; }
         final String address = host;
-        busy=true; updateControls(); say("正在输入电脑…",false);
+        busy=true; sendingText=true; updateControls(); say("正在输入电脑…",false);
         worker.execute(() -> {
             try {
                 JSONObject result = client.request(address,body);
                 handler.post(() -> {
                     if (destroyed) return;
-                    busy=false;
+                    busy=false; sendingText=false;
                     Object id = result.opt("id"), resultStatus = result.opt("status");
                     boolean valid = id instanceof String && resultStatus instanceof String
                         && tracker.receipt((String)id,Boolean.TRUE.equals(result.opt("ok")),(String)resultStatus);
-                    if (!valid) { pauseLocal(); save(); uncertainHint(); return; }
-                    save(); updateControls();
+                    if (!valid) { receiveQueued=false; pauseLocal(); save(); uncertainHint(); return; }
+                    if (!save()) { receiveQueued=false; updateControls(); return; }
+                    boolean runQueuedReceive = receiveQueued && tracker.pending() == null
+                        && !tracker.isSaved() && !tracker.hasConflict();
+                    receiveQueued=false;
+                    if (runQueuedReceive) { receiveFromComputer(); return; }
+                    updateControls();
                     if (tracker.isSaved()) {
                         say(result.optString("note","电脑只保存了文字，未自动输入。") + " 请核对后保留并重置。",true);
                     } else if (tracker.hasConflict()) {
@@ -395,7 +402,7 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 handler.post(() -> {
                     if (destroyed) return;
-                    busy=false; pauseLocal(); save(); uncertainHint();
+                    busy=false; sendingText=false; receiveQueued=false; pauseLocal(); save(); uncertainHint();
                 });
             }
         });
@@ -416,8 +423,17 @@ public class MainActivity extends Activity {
             }).show();
     }
     private void receiveFromComputer() {
-        if (busy || destroyed || !resumed || tracker.pending() != null
-                || tracker.isSaved() || tracker.hasConflict()) return;
+        if (destroyed || !resumed || storageBlocked || tracker.isSaved() || tracker.hasConflict()) return;
+        if (busy) {
+            if (!sendingText || receiveQueued || tracker.pending() == null) return;
+            receiveQueued=true;
+            pauseLocal();
+            if (!save()) { receiveQueued=false; updateControls(); return; }
+            updateControls();
+            say("已暂停后续输入 · 当前文字确认后自动接收",false);
+            return;
+        }
+        if (tracker.pending() != null) return;
         pauseLocal();
         if (!save()) { updateControls(); return; }
         final int attempt = activationEpoch;
@@ -473,7 +489,8 @@ public class MainActivity extends Activity {
         }
     }
     private boolean validReceived(String id, String text) {
-        if (!id.matches("[A-Za-z0-9_-]{1,80}") || text.isEmpty() || text.length()>20000) return false;
+        if (!id.matches("[A-Za-z0-9_-]{1,80}") || text.isEmpty()
+                || text.codePointCount(0,text.length())>20000) return false;
         for (int i=0;i<text.length();i++) {
             char c=text.charAt(i);
             if (c<32 && c!='\r' && c!='\n' && c!='\t') return false;

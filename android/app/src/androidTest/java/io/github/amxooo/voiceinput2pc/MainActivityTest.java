@@ -50,6 +50,10 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         try { Method method=MainActivity.class.getDeclaredMethod(name,types); method.setAccessible(true); method.invoke(activity,args); }
         catch (Exception e) { throw new AssertionError(e); }
     }
+    private Object call(String name, Class<?>[] types, Object... args) {
+        try { Method method=MainActivity.class.getDeclaredMethod(name,types); method.setAccessible(true); return method.invoke(activity,args); }
+        catch (Exception e) { throw new AssertionError(e); }
+    }
     private CommitTracker tracker() throws Exception { return (CommitTracker)field("tracker"); }
     private CommitEditText editor() throws Exception { return (CommitEditText)field("editor"); }
     private void ui(Runnable action) { getInstrumentation().runOnMainSync(action); }
@@ -189,8 +193,45 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         assertEquals("不能丢的草稿",prefs.getString("draft",""));
         assertEquals(0,transport.acknowledgements);
     }
-    public void testCommitIsAutomaticAndDurableBeforeRequest() throws Exception {
+    public void testReceiveDuringBlockedSendPausesImmediatelyThenRunsOnce() throws Exception {
         Transport transport=startWithTransport();
+        transport.block=true;
+        transport.receiveResult=new JSONObject().put("ok",true).put("available",true)
+            .put("id","queued-pc-item").put("text","电脑排队回传");
+        CommitEditText editor=editor(); Button receive=(Button)field("receive");
+        ui(()->editor.getText().append("正在发送"));
+        assertTrue(transport.entered.await(5,TimeUnit.SECONDS));
+        assertTrue("Receive must remain usable while the current text request is in flight",receive.isEnabled());
+        ui(receive::performClick);
+        assertFalse("Receive must pause further phone input immediately",tracker().isActive());
+        assertEquals(0,transport.receives);
+        ui(()->editor.getText().append("不会继续发送"));
+        transport.release.countDown();
+        waitFor(()->transport.acknowledgements==1);
+        assertEquals(1,transport.requests);
+        assertEquals(1,transport.receives);
+        assertEquals("电脑排队回传",tracker().draft());
+        assertFalse(tracker().isActive());
+    }
+    public void testReceivedTextLimitCountsUnicodeCodePoints() throws Exception {
+        activity=getActivity();
+        String emoji=new String(Character.toChars(0x1F642));
+        StringBuilder twentyThousand=new StringBuilder();
+        for(int i=0;i<20000;i++) twentyThousand.append(emoji);
+        assertEquals(Boolean.TRUE,call("validReceived",new Class<?>[]{String.class,String.class},
+            "emoji-20000",twentyThousand.toString()));
+        twentyThousand.append(emoji);
+        assertEquals(Boolean.FALSE,call("validReceived",new Class<?>[]{String.class,String.class},
+            "emoji-20001",twentyThousand.toString()));
+    }
+    public void testCommitIsAutomaticAndDurableBeforeRequest() throws Exception {
+        Transport transport=installTransport();
+        ui(()-> {
+            try {
+                assertTrue(tracker().start("captured-session"));
+                invoke("updateControls",new Class<?>[]{});
+            } catch(Exception e) { throw new AssertionError(e); }
+        });
         CommitEditText editor=editor();
         final InputConnection[] connection=new InputConnection[1];
         ui(()-> {
@@ -205,7 +246,10 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         assertEquals("语音完成🙂 下一行",transport.last.getString("text"));
         assertEquals(1,transport.requests);
         assertEquals("",prefs.getString("pending",""));
-        assertTrue(editor.hasFocus());
+    }
+    public void testBeginSessionFocusesEditor() throws Exception {
+        startWithTransport();
+        assertTrue(editor().hasFocus());
     }
     public void testInvalidReceiptKeepsExactRequestForExplicitRetry() throws Exception {
         Transport transport=startWithTransport(); transport.wrongId=true;

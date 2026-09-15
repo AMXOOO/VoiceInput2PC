@@ -110,7 +110,7 @@ py -3 -m venv .venv
 gradle -p android --no-daemon :app:assembleDebug
 ```
 
-正式 Release 构建要求通过环境变量提供独立签名：`VOICEINPUT2PC_KEYSTORE`、`VOICEINPUT2PC_STORE_PASSWORD`、`VOICEINPUT2PC_KEY_ALIAS`、`VOICEINPUT2PC_KEY_PASSWORD`。不得把签名文件或密码提交到仓库。
+正式 Release 构建要求通过环境变量提供独立签名：`VOICEINPUT2PC_KEYSTORE`、`VOICEINPUT2PC_STORE_PASSWORD`、`VOICEINPUT2PC_KEY_ALIAS`、`VOICEINPUT2PC_KEY_PASSWORD`。不得把签名文件或密码提交到仓库。`scripts/build_public_release.ps1` 默认还会在已连接的专用安卓模拟器上运行 instrumentation 测试，并解压最终 Windows ZIP 做启动验收；`-SkipDeviceTests` 只用于没有模拟器时的本地预构建，不能作为正式发布结果。
 
 运行电脑端测试：
 

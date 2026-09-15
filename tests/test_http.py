@@ -9,6 +9,30 @@ from receiver.http_server import make_server
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_outbox_read_failure_returns_controlled_500(self):
+        class BrokenRelay:
+            paused = False
+
+            def phone_outbox(self):
+                raise OSError('private database detail')
+
+        server = make_server(('127.0.0.1', 0), BrokenRelay(), 'test-secret')
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            conn = HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+            conn.request('GET', '/outbox', headers={'Authorization': 'Bearer test-secret'})
+            response = conn.getresponse()
+            result = json.loads(response.read())
+            self.assertEqual(500, response.status)
+            self.assertEqual({'ok': False, 'note': '接收异常，请保留草稿并重试'}, result)
+            self.assertIn('VoiceInput2PC/0.4.0', response.getheader('Server'))
+            conn.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
     def test_phone_outbox_requires_auth_and_acknowledges_exact_item(self):
         with tempfile.TemporaryDirectory() as folder:
             relay = Relay(Path(folder) / 'db', lambda text: None)

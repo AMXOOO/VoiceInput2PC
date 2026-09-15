@@ -1,4 +1,4 @@
-param([switch]$ValidateOnly)
+param([switch]$ValidateOnly, [switch]$SkipDeviceTests)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -65,25 +65,6 @@ function Resolve-AndroidTool([string]$name) {
     return $tools[0]
 }
 
-function Assert-NoForbiddenContent([string[]]$paths) {
-    $encoding = [Text.Encoding]::GetEncoding(28591)
-    $forbidden = @(
-        'BEGIN PRIVATE KEY',
-        'BEGIN RSA PRIVATE KEY',
-        'BEGIN CERTIFICATE',
-        'pairing.json',
-        'PocketType'
-    )
-    foreach ($path in $paths) {
-        $content = $encoding.GetString([IO.File]::ReadAllBytes($path))
-        foreach ($pattern in $forbidden) {
-            if ($content.Contains($pattern)) {
-                throw "Forbidden private content was found in release artifact $([IO.Path]::GetFileName($path))."
-            }
-        }
-    }
-}
-
 function Clear-GeneratedReadOnly([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { return }
     $resolved = (Resolve-Path -LiteralPath $path).Path
@@ -131,7 +112,11 @@ try {
     Clear-GeneratedReadOnly (Join-Path $project 'dist')
     Clear-GeneratedReadOnly (Join-Path $project 'android\app\build')
     Invoke-Checked $python @('-m', 'PyInstaller', '--noconfirm', '--clean', 'VoiceInput2PCReceiver.spec')
-    Invoke-Checked $gradle @('-p', 'android', 'compileDebugAndroidTestJavaWithJavac', 'assembleRelease', '--no-daemon')
+    $androidTasks = @('-p', 'android')
+    if ($SkipDeviceTests) { $androidTasks += 'compileDebugAndroidTestJavaWithJavac' }
+    else { $androidTasks += 'connectedDebugAndroidTest' }
+    $androidTasks += @('assembleRelease', '--no-daemon')
+    Invoke-Checked $gradle $androidTasks
 
     $bundle = Join-Path $project 'dist\VoiceInput2PCReceiver'
     $exe = Join-Path $bundle 'VoiceInput2PCReceiver.exe'
@@ -200,7 +185,36 @@ try {
         }
     }
 
-    Assert-NoForbiddenContent @($publicApk, $publicZip)
+    Invoke-Checked $python @('scripts\verify_release_artifacts.py',
+        '--apk', $publicApk, '--windows', $publicZip)
+
+    $verification = Join-Path $project ('build\public-package-check-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($verification) | Out-Null
+    try {
+        Expand-Archive -LiteralPath $publicZip -DestinationPath $verification
+        $packagedExe = Join-Path $verification 'VoiceInput2PCReceiver.exe'
+        foreach ($required in @(
+                $packagedExe,
+                (Join-Path $verification '_internal\_tcl_data\init.tcl'),
+                (Join-Path $verification '使用说明.txt'))) {
+            if (-not (Test-Path -LiteralPath $required)) {
+                throw "Packaged Windows archive is missing: $required"
+            }
+        }
+        Invoke-Checked $python @('scripts\verify_first_run_ui.py', $packagedExe)
+        Invoke-Checked $python @('scripts\verify_receiver_runtime.py', $packagedExe)
+    } finally {
+        $resolvedVerification = [IO.Path]::GetFullPath($verification)
+        $generatedRoot = [IO.Path]::GetFullPath((Join-Path $project 'build')) + [IO.Path]::DirectorySeparatorChar
+        if ($resolvedVerification.StartsWith($generatedRoot, [StringComparison]::OrdinalIgnoreCase) -and
+                [IO.Directory]::Exists($resolvedVerification)) {
+            Get-ChildItem -LiteralPath $resolvedVerification -Recurse -Force | ForEach-Object {
+                $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly)
+            }
+            [IO.Directory]::Delete($resolvedVerification, $true)
+        }
+    }
+
     $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publicApk).Hash.ToLowerInvariant()
     $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publicZip).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText((Join-Path $resolvedOutput $sumName),
