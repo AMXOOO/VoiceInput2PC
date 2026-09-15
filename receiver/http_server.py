@@ -56,6 +56,8 @@ def make_server(address, relay, token, certificate=None, private_key=None):
                 self.reply(401, {'ok': False, 'note': '连接凭据不匹配'})
             elif self.path == '/health':
                 self.reply(200, {'ok': True, 'app': 'VoiceInput2PC', 'paused': relay.paused, 'protocol': 2})
+            elif self.path == '/outbox':
+                self.reply(200, relay.phone_outbox())
             else:
                 self.reply(404, {'ok': False})
 
@@ -63,7 +65,7 @@ def make_server(address, relay, token, certificate=None, private_key=None):
             if not self.authorized():
                 self.reply(401, {'ok': False, 'note': '连接凭据不匹配'})
                 return
-            if self.path not in ('/text', '/session'):
+            if self.path not in ('/text', '/session', '/outbox/ack'):
                 self.reply(404, {'ok': False})
                 return
             try:
@@ -80,6 +82,10 @@ def make_server(address, relay, token, certificate=None, private_key=None):
                     if data != {}:
                         raise InvalidMessage('会话请求无效')
                     self.reply(200, relay.begin_session())
+                elif self.path == '/outbox/ack':
+                    if not isinstance(data, dict) or set(data) != {'id'}:
+                        raise InvalidMessage('接收确认无效')
+                    self.reply(200, relay.ack_phone_outbox(data['id']))
                 else:
                     self.reply(200, relay.accept(data))
             except (ValueError, UnicodeError, InvalidMessage):
