@@ -133,7 +133,8 @@ try {
     Invoke-Checked $python @('-m', 'PyInstaller', '--noconfirm', '--clean', 'VoiceInput2PCReceiver.spec')
     Invoke-Checked $gradle @('-p', 'android', 'compileDebugAndroidTestJavaWithJavac', 'assembleRelease', '--no-daemon')
 
-    $exe = Join-Path $project 'dist\VoiceInput2PCReceiver.exe'
+    $bundle = Join-Path $project 'dist\VoiceInput2PCReceiver'
+    $exe = Join-Path $bundle 'VoiceInput2PCReceiver.exe'
     $apk = Join-Path $project 'android\app\build\outputs\apk\release\app-release.apk'
     if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $apk)) {
         throw 'Expected build outputs were not produced.'
@@ -161,8 +162,8 @@ try {
     if ([IO.Directory]::Exists($resolvedOutput)) { [IO.Directory]::Delete($resolvedOutput, $true) }
     [IO.Directory]::CreateDirectory($resolvedOutput) | Out-Null
 
-    $apkName = 'VoiceInput2PC-Android-v0.3.0.apk'
-    $zipName = 'VoiceInput2PC-Windows-v0.3.0.zip'
+    $apkName = 'VoiceInput2PC-Android-v0.4.0.apk'
+    $zipName = 'VoiceInput2PC-Windows-v0.4.0.zip'
     $sumName = 'SHA256SUMS.txt'
     $publicApk = Join-Path $resolvedOutput $apkName
     $publicZip = Join-Path $resolvedOutput $zipName
@@ -171,11 +172,13 @@ try {
     $temporary = Join-Path ([IO.Path]::GetTempPath()) ('VoiceInput2PC-release-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($temporary) | Out-Null
     try {
-        Copy-Item -LiteralPath $exe -Destination (Join-Path $temporary 'VoiceInput2PCReceiver.exe')
+        foreach ($item in (Get-ChildItem -LiteralPath $bundle -Force)) {
+            Copy-Item -LiteralPath $item.FullName -Destination $temporary -Recurse
+        }
         $quickStarts = @(Get-ChildItem -LiteralPath (Join-Path $project 'release') -File -Filter '*.txt')
         if ($quickStarts.Count -ne 1) { throw 'Expected exactly one tracked quick-start text file.' }
         Copy-Item -LiteralPath $quickStarts[0].FullName -Destination $temporary
-        $zipInputs = @(Get-ChildItem -LiteralPath $temporary -File | ForEach-Object FullName)
+        $zipInputs = @(Get-ChildItem -LiteralPath $temporary -Force | ForEach-Object FullName)
         Compress-Archive -LiteralPath $zipInputs -DestinationPath $publicZip -CompressionLevel Optimal
     } finally {
         $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())

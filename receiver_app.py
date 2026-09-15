@@ -22,7 +22,7 @@ from receiver.pairing import load_pairing, prepare_receiver
 from receiver.win_input import type_text, capture_target, copy_text
 
 
-APP_VERSION = '0.3.1'
+APP_VERSION = '0.4.0'
 APP_TITLE = '语音输入电脑 · 电脑接收端'
 FIRST_RUN_TITLE = '语音输入电脑 · 首次设置'
 PAIRING_TITLE = '语音输入电脑 · 配对手机'
