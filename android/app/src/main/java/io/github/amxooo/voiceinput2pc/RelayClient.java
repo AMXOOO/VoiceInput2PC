@@ -52,6 +52,14 @@ public final class RelayClient implements RelayTransport {
         return request(host, "/session", new JSONObject());
     }
 
+    public JSONObject receive(String host) throws Exception {
+        return request(host, "/outbox", null);
+    }
+
+    public JSONObject acknowledge(String host, String id) throws Exception {
+        return request(host, "/outbox/ack", new JSONObject().put("id", id));
+    }
+
     private JSONObject request(String host, String path, JSONObject body) throws Exception {
         if (!host.matches("[A-Za-z0-9.-]+")) throw new Exception("电脑地址格式不正确");
         URL url = new URL("https://" + host + ":" + port + path);

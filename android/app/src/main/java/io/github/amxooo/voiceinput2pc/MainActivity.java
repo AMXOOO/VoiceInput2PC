@@ -27,7 +27,7 @@ public class MainActivity extends Activity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private CommitEditText editor;
     private TextView status, destination, counter;
-    private Button start, fresh, retry;
+    private Button start, fresh, retry, receive;
     private Button pairingButton;
     private EditText pairingInput;
     private SharedPreferences prefs;
@@ -233,16 +233,20 @@ public class MainActivity extends Activity {
         LinearLayout actions = new LinearLayout(this);
         fresh = new Button(this); fresh.setText("新一段");
         start = new Button(this); start.setText("开始输入到电脑");
+        receive = new Button(this); receive.setText("接收");
         start.setTextColor(Color.WHITE); start.setBackgroundTintList(ColorStateList.valueOf(green));
         actions.addView(fresh,new LinearLayout.LayoutParams(0,dp(58),1));
         LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(0,dp(58),2);
-        startParams.leftMargin=dp(8); actions.addView(start,startParams); layout.addView(actions,row(-2));
+        startParams.leftMargin=dp(8); actions.addView(start,startParams);
+        LinearLayout.LayoutParams receiveParams = new LinearLayout.LayoutParams(0,dp(58),1);
+        receiveParams.leftMargin=dp(8); actions.addView(receive,receiveParams); layout.addView(actions,row(-2));
         TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。换电脑窗口后请重新开始。换行、回车、Tab 会转为空格。",12,Color.GRAY);
         hint.setPadding(0,dp(8),0,dp(2)); layout.addView(hint,row(-2));
         setContentView(layout);
         loading=true; editor.setText(draft); editor.setSelection(editor.length()); loading=false;
         editor.setEditObserver(this::edited);
         start.setOnClickListener(v -> toggleStart()); fresh.setOnClickListener(v -> newDraft());
+        receive.setOnClickListener(v -> receiveFromComputer());
         updateControls();
         if (pending != null) uncertainHint();
         else if (tracker.isSaved()) say("电脑只保存了文字，未自动输入。点“保留并重置”核对后恢复。",true);
@@ -277,6 +281,8 @@ public class MainActivity extends Activity {
         start.setEnabled(tracker.isActive() || (!busy && !storageBlocked && tracker.pending() == null && !tracker.isSaved() && !tracker.hasConflict()));
         fresh.setEnabled(!busy);
         fresh.setText(tracker.pending() != null || tracker.isSaved() || tracker.hasConflict() ? "保留并重置" : "新一段");
+        receive.setEnabled(!busy && !storageBlocked && tracker.pending() == null
+            && !tracker.isSaved() && !tracker.hasConflict());
         retry.setVisibility(tracker.pending() != null && !tracker.pending().session.isEmpty() ? View.VISIBLE : View.GONE);
         retry.setEnabled(!busy);
         counter.setText("电脑已接收输入 " + tracker.sent().codePointCount(0,tracker.sent().length())
@@ -408,6 +414,74 @@ public class MainActivity extends Activity {
             .setNegativeButton("取消",null).setPositiveButton("重试确认",(d,w)-> {
                 if (tracker.pending() != null) dispatch(tracker.pending());
             }).show();
+    }
+    private void receiveFromComputer() {
+        if (busy || destroyed || !resumed || tracker.pending() != null
+                || tracker.isSaved() || tracker.hasConflict()) return;
+        pauseLocal();
+        if (!save()) { updateControls(); return; }
+        final int attempt = activationEpoch;
+        final String address = host;
+        busy=true; updateControls(); say("正在接收电脑文字…",false);
+        worker.execute(() -> {
+            try {
+                JSONObject result=client.receive(address);
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy=false;
+                    if (!resumed || attempt != activationEpoch) { updateControls(); return; }
+                    if (!Boolean.TRUE.equals(result.opt("ok"))) {
+                        updateControls(); say("电脑没有返回可用文字，请稍后重试。",true); return;
+                    }
+                    if (!result.optBoolean("available",false)) {
+                        updateControls(); say("电脑暂无待接收文字。先在电脑复制文字并点“发送剪贴板到手机”。",false); return;
+                    }
+                    Object itemId=result.opt("id"), itemText=result.opt("text");
+                    if (!(itemId instanceof String) || !(itemText instanceof String)
+                            || !validReceived((String)itemId,(String)itemText)) {
+                        updateControls(); say("电脑返回的文字格式不正确，原草稿已保留。",true); return;
+                    }
+                    String id=(String)itemId, text=(String)itemText;
+                    loading=true; tracker.reset(text); legacyPendingRaw="";
+                    editor.setText(text); editor.setSelection(editor.length()); loading=false;
+                    if (!save()) { updateControls(); return; }
+                    updateControls(); say("已接收电脑文字 · 当前保持暂停",false);
+                    worker.execute(() -> acknowledgeReceived(address,id));
+                });
+            } catch(Exception e) {
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy=false; updateControls();
+                    if (attempt == activationEpoch)
+                        say("接收失败。请确认电脑接收端已启动、两端网络可达，然后重试。",true);
+                });
+            }
+        });
+    }
+    private void acknowledgeReceived(String address, String id) {
+        try {
+            JSONObject result=client.acknowledge(address,id);
+            Object resultId=result.opt("id");
+            if (!Boolean.TRUE.equals(result.opt("ok")) || !(resultId instanceof String)
+                    || !id.equals(resultId) || !"received".equals(result.optString("status")))
+                throw new Exception("invalid acknowledgement");
+        } catch(Exception e) {
+            handler.post(() -> {
+                if (!destroyed)
+                    say("文字已接收；电脑尚未确认，下次可能再次收到同一条。",true);
+            });
+        }
+    }
+    private boolean validReceived(String id, String text) {
+        if (!id.matches("[A-Za-z0-9_-]{1,80}") || text.isEmpty() || text.length()>20000) return false;
+        for (int i=0;i<text.length();i++) {
+            char c=text.charAt(i);
+            if (c<32 && c!='\r' && c!='\n' && c!='\t') return false;
+            if (Character.isHighSurrogate(c)) {
+                if (++i>=text.length() || !Character.isLowSurrogate(text.charAt(i))) return false;
+            } else if (Character.isLowSurrogate(c)) return false;
+        }
+        return true;
     }
     private void newDraft() {
         if (busy || destroyed) return;

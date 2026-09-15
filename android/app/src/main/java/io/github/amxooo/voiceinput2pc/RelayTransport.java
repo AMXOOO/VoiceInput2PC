@@ -6,4 +6,6 @@ import org.json.JSONObject;
 public interface RelayTransport {
     JSONObject request(String host, JSONObject body) throws Exception;
     JSONObject session(String host) throws Exception;
+    JSONObject receive(String host) throws Exception;
+    JSONObject acknowledge(String host, String id) throws Exception;
 }

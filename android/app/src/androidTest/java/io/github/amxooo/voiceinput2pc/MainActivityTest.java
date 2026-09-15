@@ -9,6 +9,7 @@ import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import org.json.JSONObject;
 import java.lang.reflect.*;
 import java.util.concurrent.CountDownLatch;
@@ -64,14 +65,26 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
             +", interrupted="+editor().wasConnectionInterrupted()+", status="+((android.widget.TextView)field("status")).getText());
     }
     private final class Transport implements InvocationHandler {
-        volatile int requests, sessions;
+        volatile int requests, sessions, receives, acknowledgements;
         volatile boolean durable, wrongId, block;
-        volatile JSONObject last;
+        volatile JSONObject last, receiveResult;
+        volatile String acknowledgedId;
         final CountDownLatch entered=new CountDownLatch(1), release=new CountDownLatch(1), returned=new CountDownLatch(1);
         @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             if (method.getName().equals("session")) {
                 sessions++;
                 return new JSONObject().put("ok",true).put("session","captured-session").put("note","ready");
+            }
+            if (method.getName().equals("receive")) {
+                receives++;
+                return receiveResult == null
+                    ? new JSONObject().put("ok",true).put("available",false)
+                    : new JSONObject(receiveResult.toString());
+            }
+            if (method.getName().equals("acknowledge")) {
+                acknowledgements++;
+                acknowledgedId=(String)args[1];
+                return new JSONObject().put("ok",true).put("id",acknowledgedId).put("status","received");
             }
             JSONObject body=(JSONObject)args[1];
             if(body==null) return new JSONObject().put("ok",true).put("app","VoiceInput2PC").put("protocol",2).put("paused",false);
@@ -87,7 +100,7 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
             returned.countDown(); return response;
         }
     }
-    private Transport startWithTransport() throws Exception {
+    private Transport installTransport() throws Exception {
         activity=getActivity();
         Transport transport=new Transport(); runningTransport=transport;
         Class<?> boundary;
@@ -96,6 +109,10 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         Field client=MainActivity.class.getDeclaredField("client"); client.setAccessible(true);
         Object replacement=Proxy.newProxyInstance(boundary.getClassLoader(),new Class<?>[]{boundary},transport);
         ui(()-> { try { client.set(activity,replacement); } catch(Exception e) { throw new AssertionError(e); } });
+        return transport;
+    }
+    private Transport startWithTransport() throws Exception {
+        Transport transport=installTransport();
         ui(()->invoke("beginSession",new Class<?>[]{}));
         waitFor(()->tracker().isActive());
         return transport;
@@ -115,6 +132,62 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         getInstrumentation().waitForIdleSync();
         assertEquals(original,PairingStore.load(prefs));
         assertNotNull(field("pairingInput"));
+    }
+    public void testBottomButtonsUseApprovedOrder() throws Exception {
+        activity=getActivity();
+        Button fresh=(Button)field("fresh");
+        Button start=(Button)field("start");
+        Button receive=(Button)field("receive");
+        LinearLayout actions=(LinearLayout)fresh.getParent();
+        assertSame(actions,start.getParent());
+        assertSame(actions,receive.getParent());
+        assertEquals(0,actions.indexOfChild(fresh));
+        assertEquals(1,actions.indexOfChild(start));
+        assertEquals(2,actions.indexOfChild(receive));
+        assertEquals("新一段",fresh.getText().toString());
+        assertEquals("开始输入到电脑",start.getText().toString());
+        assertEquals("接收",receive.getText().toString());
+    }
+    public void testReceivePausesReplacesDraftPersistsAndNeverEchoes() throws Exception {
+        prefs.edit().putString("draft","手机原有草稿").commit();
+        Transport transport=installTransport();
+        String id="pc-item-1";
+        transport.receiveResult=new JSONObject().put("ok",true).put("available",true)
+            .put("id",id).put("text","电脑回传🙂\n第二行");
+        ui(()-> {
+            try {
+                assertTrue(tracker().start("active-session"));
+                invoke("updateControls",new Class<?>[]{});
+                ((Button)field("receive")).performClick();
+            } catch(Exception e) { throw new AssertionError(e); }
+        });
+        waitFor(()->transport.acknowledgements==1);
+        assertEquals(1,transport.receives);
+        assertEquals(id,transport.acknowledgedId);
+        assertEquals(0,transport.requests);
+        assertFalse(tracker().isActive());
+        assertEquals("电脑回传🙂\n第二行",editor().getText().toString());
+        assertEquals("电脑回传🙂\n第二行",tracker().draft());
+        assertEquals("电脑回传🙂\n第二行",prefs.getString("draft",""));
+        assertEquals("",tracker().sent());
+        assertNull(tracker().pending());
+    }
+    public void testReceiveEmptyOrMalformedKeepsExistingDraft() throws Exception {
+        prefs.edit().putString("draft","不能丢的草稿").commit();
+        Transport transport=installTransport();
+        Button receive=(Button)field("receive");
+        ui(receive::performClick);
+        waitFor(()->transport.receives==1 && receive.isEnabled());
+        assertEquals("不能丢的草稿",editor().getText().toString());
+        assertEquals(0,transport.acknowledgements);
+
+        transport.receiveResult=new JSONObject().put("ok",true).put("available",true)
+            .put("id","../bad").put("text","不应覆盖");
+        ui(receive::performClick);
+        waitFor(()->transport.receives==2 && receive.isEnabled());
+        assertEquals("不能丢的草稿",editor().getText().toString());
+        assertEquals("不能丢的草稿",prefs.getString("draft",""));
+        assertEquals(0,transport.acknowledgements);
     }
     public void testCommitIsAutomaticAndDurableBeforeRequest() throws Exception {
         Transport transport=startWithTransport();
