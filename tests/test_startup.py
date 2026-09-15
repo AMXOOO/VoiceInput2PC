@@ -54,6 +54,31 @@ class StartupMessageTests(unittest.TestCase):
             self.assertIsNone(rows)
             self.assertIn('历史', error)
 
+    def test_clipboard_text_is_queued_only_after_valid_explicit_action(self):
+        from receiver.core import Relay
+        with tempfile.TemporaryDirectory() as folder:
+            relay = Relay(Path(folder) / 'db', lambda text: None)
+            ok, note = receiver_app.queue_clipboard_for_phone(
+                relay, lambda: 'Word 里的文字🙂\n第二行')
+            self.assertTrue(ok)
+            self.assertIn('手机', note)
+            waiting = relay.phone_outbox()
+            self.assertEqual('Word 里的文字🙂\n第二行', waiting['text'])
+            original_id = waiting['id']
+
+            invalid_readers = [
+                lambda: '',
+                lambda: '   \n',
+                lambda: 'x' * 20001,
+                lambda: '坏\x00文字',
+                lambda: (_ for _ in ()).throw(receiver_app.tk.TclError('no text')),
+            ]
+            for reader in invalid_readers:
+                ok, note = receiver_app.queue_clipboard_for_phone(relay, reader)
+                self.assertFalse(ok)
+                self.assertTrue(note)
+                self.assertEqual(original_id, relay.phone_outbox()['id'])
+
     def test_ui_poll_recovers_after_error_and_stops_scheduling_after_exit(self):
         commands = queue.Queue()
         commands.put('show')

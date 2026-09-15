@@ -15,7 +15,7 @@ from tkinter import ttk, messagebox
 from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw
-from receiver.core import Relay
+from receiver.core import Relay, InvalidMessage
 from receiver.http_server import make_server
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
@@ -35,6 +35,20 @@ def read_history(relay):
         return relay.recent(), ''
     except (sqlite3.Error, OSError):
         return None, '暂时无法读取历史记录；仍可在托盘暂停或退出，稍后重试'
+
+
+def queue_clipboard_for_phone(relay, read_clipboard):
+    try:
+        text = read_clipboard()
+    except (tk.TclError, TypeError):
+        return False, '剪贴板里没有可发送的纯文字'
+    if not isinstance(text, str) or not text.strip():
+        return False, '剪贴板里没有可发送的纯文字'
+    try:
+        relay.queue_for_phone(text)
+    except InvalidMessage:
+        return False, '剪贴板文字过长或包含不支持的字符，未改变原待接收文字'
+    return True, '已准备发送到手机 · 请在手机点“接收”'
 
 
 def pump_commands(commands, handle, schedule, report_error):
@@ -200,10 +214,15 @@ def main():
             copy_text(rows[sel[0]]['text'])
             status.config(text='已复制，可切换到目标窗口按 Ctrl+V')
 
+    def send_clipboard_to_phone():
+        _, note = queue_clipboard_for_phone(relay, root.clipboard_get)
+        status.config(text=note)
+
     listing.bind('<<ListboxSelect>>', select)
     buttons = ttk.Frame(container)
     buttons.pack(fill='x')
     ttk.Button(buttons, text='复制选中文字', command=copy_selected).pack(side='left')
+    ttk.Button(buttons, text='发送剪贴板到手机', command=send_clipboard_to_phone).pack(side='left', padx=(8, 0))
     ttk.Button(buttons, text='刷新', command=refresh).pack(side='left', padx=8)
     ttk.Button(buttons, text='配对手机', command=lambda: open_pairing()).pack(side='left')
     ttk.Button(buttons, text='收起到托盘', command=root.withdraw).pack(side='right')
