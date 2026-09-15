@@ -79,6 +79,16 @@ class StartupMessageTests(unittest.TestCase):
                 self.assertTrue(note)
                 self.assertEqual(original_id, relay.phone_outbox()['id'])
 
+            class UnwritableRelay:
+                def queue_for_phone(self, _text):
+                    raise sqlite3.OperationalError('database unavailable')
+
+            ok, note = receiver_app.queue_clipboard_for_phone(
+                UnwritableRelay(), lambda: '仍然不要泄露正文')
+            self.assertFalse(ok)
+            self.assertIn('保存', note)
+            self.assertNotIn('仍然不要泄露正文', note)
+
     def test_ui_poll_recovers_after_error_and_stops_scheduling_after_exit(self):
         commands = queue.Queue()
         commands.put('show')

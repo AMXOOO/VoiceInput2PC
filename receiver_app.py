@@ -48,6 +48,8 @@ def queue_clipboard_for_phone(relay, read_clipboard):
         relay.queue_for_phone(text)
     except InvalidMessage:
         return False, '剪贴板文字过长或包含不支持的字符，未改变原待接收文字'
+    except (sqlite3.Error, OSError):
+        return False, '暂时无法保存待接收文字，请稍后重试'
     return True, '已准备发送到手机 · 请在手机点“接收”'
 
 
