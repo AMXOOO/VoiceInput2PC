@@ -139,6 +139,12 @@ try {
     if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $apk)) {
         throw 'Expected build outputs were not produced.'
     }
+    $versionInfo = (Get-Item -LiteralPath $exe).VersionInfo
+    if ($versionInfo.FileVersion -ne '0.4.0.0' -or $versionInfo.ProductVersion -ne '0.4.0') {
+        throw "Unexpected executable version metadata: $($versionInfo.FileVersion) / $($versionInfo.ProductVersion)"
+    }
+    Invoke-Checked $python @('scripts\verify_first_run_ui.py', $exe)
+    Invoke-Checked $python @('scripts\verify_receiver_runtime.py', $exe)
     Invoke-Checked $apksigner @('verify', '--verbose', $apk)
     $permissions = @(& $aapt dump permissions $apk)
     if (($LASTEXITCODE -ne 0) -or

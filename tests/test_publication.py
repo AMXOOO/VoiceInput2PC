@@ -108,6 +108,9 @@ class ReleaseBuildTests(unittest.TestCase):
         for name in ('VoiceInput2PC-Android-v0.4.0.apk',
                      'VoiceInput2PC-Windows-v0.4.0.zip', 'SHA256SUMS.txt'):
             self.assertIn(name, script)
+        self.assertIn("dist\\VoiceInput2PCReceiver", script)
+        self.assertIn("scripts\\verify_first_run_ui.py", script)
+        self.assertIn("scripts\\verify_receiver_runtime.py", script)
 
     def test_release_signing_comes_only_from_required_environment(self):
         build = (ROOT / 'android/app/build.gradle').read_text(encoding='utf-8')
