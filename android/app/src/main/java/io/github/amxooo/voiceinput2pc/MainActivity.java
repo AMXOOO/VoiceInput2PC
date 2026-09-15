@@ -32,10 +32,11 @@ public class MainActivity extends Activity {
     private EditText pairingInput;
     private SharedPreferences prefs;
     private RelayTransport client;
+    private RelayTransport receiveQueueClient;
     private CommitTracker tracker;
-    private String host, legacyPendingRaw = "";
+    private String host, receiveQueueHost, legacyPendingRaw = "";
     private boolean busy, loading, destroyed, resumed, storageBlocked, sendingText, receiveQueued;
-    private int activationEpoch;
+    private int activationEpoch, receiveQueueEpoch = -1;
     private final int green = Color.rgb(22,112,91);
     private final Runnable flush = this::transmitCommitted;
 
@@ -73,6 +74,7 @@ public class MainActivity extends Activity {
         setIntent(intent);
         String incoming = incomingPairing(intent);
         if (incoming != null) {
+            clearQueuedReceive();
             if (tracker != null) { pauseLocal(); save(); }
             showPairingScreen("正在读取电脑配对码…");
             pairingInput.setText(incoming);
@@ -87,6 +89,7 @@ public class MainActivity extends Activity {
     }
 
     private void showPairingScreen(String message) {
+        clearQueuedReceive();
         setTitle("连接电脑");
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -165,6 +168,7 @@ public class MainActivity extends Activity {
     }
 
     private void showTypingScreen(PairingConfig pairing) {
+        clearQueuedReceive();
         setTitle("语音输入电脑");
         try {
             host = prefs.getString("host", pairing.host);
@@ -384,12 +388,17 @@ public class MainActivity extends Activity {
                     Object id = result.opt("id"), resultStatus = result.opt("status");
                     boolean valid = id instanceof String && resultStatus instanceof String
                         && tracker.receipt((String)id,Boolean.TRUE.equals(result.opt("ok")),(String)resultStatus);
-                    if (!valid) { receiveQueued=false; pauseLocal(); save(); uncertainHint(); return; }
-                    if (!save()) { receiveQueued=false; updateControls(); return; }
-                    boolean runQueuedReceive = receiveQueued && tracker.pending() == null
+                    if (!valid) { clearQueuedReceive(); pauseLocal(); save(); uncertainHint(); return; }
+                    if (!save()) { clearQueuedReceive(); updateControls(); return; }
+                    RelayTransport queuedClient = receiveQueueClient;
+                    String queuedHost = receiveQueueHost;
+                    boolean runQueuedReceive = queuedReceiveIsCurrent() && tracker.pending() == null
                         && !tracker.isSaved() && !tracker.hasConflict();
-                    receiveQueued=false;
-                    if (runQueuedReceive) { receiveFromComputer(); return; }
+                    clearQueuedReceive();
+                    if (runQueuedReceive) {
+                        beginReceiveFromComputer(queuedClient,queuedHost,activationEpoch);
+                        return;
+                    }
                     updateControls();
                     if (tracker.isSaved()) {
                         say(result.optString("note","电脑只保存了文字，未自动输入。") + " 请核对后保留并重置。",true);
@@ -402,7 +411,7 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 handler.post(() -> {
                     if (destroyed) return;
-                    busy=false; sendingText=false; receiveQueued=false; pauseLocal(); save(); uncertainHint();
+                    busy=false; sendingText=false; clearQueuedReceive(); pauseLocal(); save(); uncertainHint();
                 });
             }
         });
@@ -426,9 +435,12 @@ public class MainActivity extends Activity {
         if (destroyed || !resumed || storageBlocked || tracker.isSaved() || tracker.hasConflict()) return;
         if (busy) {
             if (!sendingText || receiveQueued || tracker.pending() == null) return;
-            receiveQueued=true;
             pauseLocal();
-            if (!save()) { receiveQueued=false; updateControls(); return; }
+            receiveQueued=true;
+            receiveQueueEpoch=activationEpoch;
+            receiveQueueHost=host;
+            receiveQueueClient=client;
+            if (!save()) { clearQueuedReceive(); updateControls(); return; }
             updateControls();
             say("已暂停后续输入 · 当前文字确认后自动接收",false);
             return;
@@ -436,16 +448,18 @@ public class MainActivity extends Activity {
         if (tracker.pending() != null) return;
         pauseLocal();
         if (!save()) { updateControls(); return; }
-        final int attempt = activationEpoch;
-        final String address = host;
+        beginReceiveFromComputer(client,host,activationEpoch);
+    }
+    private void beginReceiveFromComputer(RelayTransport receiveClient, String address, int attempt) {
         busy=true; updateControls(); say("正在接收电脑文字…",false);
         worker.execute(() -> {
             try {
-                JSONObject result=client.receive(address);
+                JSONObject result=receiveClient.receive(address);
                 handler.post(() -> {
                     if (destroyed) return;
                     busy=false;
-                    if (!resumed || attempt != activationEpoch) { updateControls(); return; }
+                    if (!resumed || attempt != activationEpoch || receiveClient != client
+                            || !address.equals(host)) { updateControls(); return; }
                     if (!Boolean.TRUE.equals(result.opt("ok"))) {
                         updateControls(); say("电脑没有返回可用文字，请稍后重试。",true); return;
                     }
@@ -462,7 +476,7 @@ public class MainActivity extends Activity {
                     editor.setText(text); editor.setSelection(editor.length()); loading=false;
                     if (!save()) { updateControls(); return; }
                     updateControls(); say("已接收电脑文字 · 当前保持暂停",false);
-                    worker.execute(() -> acknowledgeReceived(address,id));
+                    worker.execute(() -> acknowledgeReceived(receiveClient,address,id,attempt));
                 });
             } catch(Exception e) {
                 handler.post(() -> {
@@ -474,19 +488,31 @@ public class MainActivity extends Activity {
             }
         });
     }
-    private void acknowledgeReceived(String address, String id) {
+    private void acknowledgeReceived(RelayTransport receiveClient, String address, String id, int attempt) {
         try {
-            JSONObject result=client.acknowledge(address,id);
+            JSONObject result=receiveClient.acknowledge(address,id);
             Object resultId=result.opt("id");
             if (!Boolean.TRUE.equals(result.opt("ok")) || !(resultId instanceof String)
                     || !id.equals(resultId) || !"received".equals(result.optString("status")))
                 throw new Exception("invalid acknowledgement");
         } catch(Exception e) {
             handler.post(() -> {
-                if (!destroyed)
+                if (!destroyed && attempt == activationEpoch && receiveClient == client
+                        && address.equals(host))
                     say("文字已接收；电脑尚未确认，下次可能再次收到同一条。",true);
             });
         }
+    }
+    private boolean queuedReceiveIsCurrent() {
+        return receiveQueued && receiveQueueEpoch == activationEpoch
+            && receiveQueueClient == client && receiveQueueHost != null
+            && receiveQueueHost.equals(host);
+    }
+    private void clearQueuedReceive() {
+        receiveQueued=false;
+        receiveQueueEpoch=-1;
+        receiveQueueHost=null;
+        receiveQueueClient=null;
     }
     private boolean validReceived(String id, String text) {
         if (!id.matches("[A-Za-z0-9_-]{1,80}") || text.isEmpty()
@@ -553,10 +579,11 @@ public class MainActivity extends Activity {
     @Override public void onResume() { super.onResume(); resumed=true; if(tracker!=null) updateControls(); }
     @Override public void onPause() {
         resumed=false;
+        clearQueuedReceive();
         if (tracker!=null) { pauseLocal(); save(); say("已暂停 · 回到前台后请重新点开始",false); }
         super.onPause();
     }
     @Override public void onDestroy() {
-        destroyed=true; handler.removeCallbacksAndMessages(null); worker.shutdown(); super.onDestroy();
+        destroyed=true; clearQueuedReceive(); handler.removeCallbacksAndMessages(null); worker.shutdown(); super.onDestroy();
     }
 }

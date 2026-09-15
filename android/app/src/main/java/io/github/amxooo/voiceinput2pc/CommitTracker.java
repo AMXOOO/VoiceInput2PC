@@ -36,7 +36,8 @@ public final class CommitTracker {
     public Pending prepare(String id) {
         if (!active || pending != null || conflict || saved || ready == null || !ready.startsWith(sent)) return null;
         String suffix = ready.substring(sent.length());
-        if (suffix.isEmpty() || suffix.length() > 20000 || !validUnicode(suffix)) return null;
+        if (suffix.isEmpty() || suffix.codePointCount(0, suffix.length()) > 20000
+                || !validUnicode(suffix)) return null;
         pending = new Pending(id, ready, normalize(suffix), session);
         return pending;
     }

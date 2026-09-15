@@ -213,6 +213,27 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         assertEquals("电脑排队回传",tracker().draft());
         assertFalse(tracker().isActive());
     }
+    public void testQueuedReceiveIsCancelledWhenPairingScreenReplacesTypingScreen() throws Exception {
+        Transport transport=startWithTransport();
+        transport.block=true;
+        transport.receiveResult=new JSONObject().put("ok",true).put("available",true)
+            .put("id","old-computer-item").put("text","旧电脑文字不能覆盖新页面");
+        CommitEditText editor=editor(); Button receive=(Button)field("receive");
+        ui(()->editor.getText().append("旧电脑正在发送"));
+        assertTrue(transport.entered.await(5,TimeUnit.SECONDS));
+        ui(receive::performClick);
+        ui(()->activity.onNewIntent(new Intent(Intent.ACTION_VIEW,
+            Uri.parse("voiceinput2pc://pair?p=bad"))));
+        transport.release.countDown();
+        assertTrue(transport.returned.await(5,TimeUnit.SECONDS));
+        getInstrumentation().waitForIdleSync();
+        android.os.SystemClock.sleep(200);
+        getInstrumentation().waitForIdleSync();
+        assertEquals(0,transport.receives);
+        assertEquals("voiceinput2pc://pair?p=bad",
+            ((android.widget.EditText)field("pairingInput")).getText().toString());
+        assertEquals("旧电脑正在发送",editor.getText().toString());
+    }
     public void testReceivedTextLimitCountsUnicodeCodePoints() throws Exception {
         activity=getActivity();
         String emoji=new String(Character.toChars(0x1F642));

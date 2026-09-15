@@ -38,6 +38,11 @@ public final class CommitTrackerTest {
         observe(tracker, text, false, false);
         return call(tracker, "prepare", id);
     }
+    private static String repeated(String value, int count) {
+        StringBuilder result = new StringBuilder(value.length() * count);
+        for (int i = 0; i < count; i++) result.append(value);
+        return result.toString();
+    }
 
     private static void compositionOnlyEmitsFinalCommit() throws Exception {
         Object tracker = empty();
@@ -145,6 +150,21 @@ public final class CommitTrackerTest {
         Object legacy = tracker("已发", "已发旧草稿", null, false);
         equal(false, call(legacy, "isActive"), "legacy restored draft paused");
     }
+    private static void textLimitCountsUnicodeCodePoints() throws Exception {
+        String emoji = new String(Character.toChars(0x1F642));
+        Object allowed = empty();
+        equal(false, call(allowed, "start", ""), "empty session remains invalid");
+        call(allowed, "start", "session-A");
+        observe(allowed, repeated(emoji, 20000), false, false);
+        equal(false, call(allowed, "prepare", "emoji-20000") == null,
+            "twenty thousand supplementary code points are accepted");
+
+        Object rejected = empty();
+        call(rejected, "start", "session-A");
+        observe(rejected, repeated(emoji, 20001), false, false);
+        equal(null, call(rejected, "prepare", "emoji-20001"),
+            "twenty thousand and one supplementary code points are rejected");
+    }
     public static void main(String[] args) throws Exception {
         try {
             trackerClass = Class.forName("io.github.amxooo.voiceinput2pc.CommitTracker");
@@ -159,6 +179,7 @@ public final class CommitTrackerTest {
         savedTextNeedsDeliberateRecovery();
         normalizationKeepsOriginalOffsets();
         restorationAndPauseNeverAutoRearm();
+        textLimitCountsUnicodeCodePoints();
         System.out.println(checks + " commit tracker checks passed");
     }
 }
