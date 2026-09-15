@@ -60,6 +60,42 @@ class RelayTests(unittest.TestCase):
         self.assertEqual('saved', self.relay.accept({'id': 'pause_1', 'text': '保存'})['status'])
         self.assertEqual([], self.typed)
 
+    def test_phone_outbox_persists_and_acknowledges_idempotently(self):
+        queued = self.relay.queue_for_phone('电脑文字🙂\n第二行')
+        self.assertTrue(queued['ok'])
+        self.assertEqual('pending', queued['status'])
+        self.assertRegex(queued['id'], r'^[A-Za-z0-9_-]{1,80}$')
+
+        restarted = Relay(self.db, self.typed.append)
+        waiting = restarted.phone_outbox()
+        self.assertTrue(waiting['available'])
+        self.assertEqual(queued['id'], waiting['id'])
+        self.assertEqual('电脑文字🙂\n第二行', waiting['text'])
+
+        received = restarted.ack_phone_outbox(queued['id'])
+        self.assertEqual({'ok': True, 'id': queued['id'], 'status': 'received'}, received)
+        self.assertFalse(restarted.phone_outbox()['available'])
+        self.assertEqual(received, restarted.ack_phone_outbox(queued['id']))
+
+    def test_new_phone_outbox_replaces_old_and_stale_ack_is_safe(self):
+        old = self.relay.queue_for_phone('旧文字')
+        current = self.relay.queue_for_phone('新文字')
+        self.assertNotEqual(old['id'], current['id'])
+        with self.assertRaises(InvalidMessage):
+            self.relay.ack_phone_outbox(old['id'])
+        waiting = self.relay.phone_outbox()
+        self.assertEqual(current['id'], waiting['id'])
+        self.assertEqual('新文字', waiting['text'])
+
+    def test_invalid_phone_outbox_text_never_replaces_waiting_text(self):
+        queued = self.relay.queue_for_phone('保留这条')
+        for text in ['', 'x' * 20001, '坏\x00文字', 3, None]:
+            with self.assertRaises(InvalidMessage):
+                self.relay.queue_for_phone(text)
+        waiting = self.relay.phone_outbox()
+        self.assertEqual(queued['id'], waiting['id'])
+        self.assertEqual('保留这条', waiting['text'])
+
 
 if __name__ == '__main__':
     unittest.main()

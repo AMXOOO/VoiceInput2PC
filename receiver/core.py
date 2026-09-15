@@ -42,6 +42,9 @@ class Relay:
             db.execute('CREATE TABLE IF NOT EXISTS messages '
                        '(id TEXT PRIMARY KEY, text TEXT NOT NULL, status TEXT NOT NULL, '
                        'note TEXT NOT NULL, created REAL NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS phone_outbox '
+                       '(slot INTEGER PRIMARY KEY CHECK(slot=1), id TEXT NOT NULL, '
+                       'text TEXT NOT NULL, status TEXT NOT NULL, created REAL NOT NULL)')
             db.execute("UPDATE messages SET status='saved', note='程序曾中断，请在电脑历史中核对' WHERE status='pending'")
 
     @property
@@ -144,3 +147,28 @@ class Relay:
     def recent(self, limit=100):
         with self.lock, self._connect() as db:
             return [dict(r) for r in db.execute('SELECT * FROM messages ORDER BY created DESC LIMIT ?', (limit,))]
+
+    def queue_for_phone(self, text):
+        _, text = validate_message({'id': 'phone-outbox', 'text': text})
+        key = secrets.token_urlsafe(24)
+        with self.lock, self._connect() as db:
+            db.execute('INSERT OR REPLACE INTO phone_outbox VALUES (?,?,?,?,?)',
+                       (1, key, text, 'pending', time.time()))
+        return {'ok': True, 'id': key, 'status': 'pending'}
+
+    def phone_outbox(self):
+        with self.lock, self._connect() as db:
+            row = db.execute('SELECT id, text, status FROM phone_outbox WHERE slot=1').fetchone()
+            if row is None or row['status'] != 'pending':
+                return {'ok': True, 'available': False}
+            return {'ok': True, 'available': True, 'id': row['id'], 'text': row['text']}
+
+    def ack_phone_outbox(self, key):
+        if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', key):
+            raise InvalidMessage('消息编号无效')
+        with self.lock, self._connect() as db:
+            row = db.execute('SELECT id FROM phone_outbox WHERE slot=1').fetchone()
+            if row is None or row['id'] != key:
+                raise InvalidMessage('待接收文字编号已改变')
+            db.execute("UPDATE phone_outbox SET status='received' WHERE slot=1", ())
+        return {'ok': True, 'id': key, 'status': 'received'}
