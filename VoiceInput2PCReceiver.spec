@@ -4,7 +4,7 @@
 a = Analysis(
     ['receiver_app.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('vendor/tailcat/windows/tailcat.exe', 'tailcat')],
     datas=[],
     hiddenimports=['pystray._win32', 'qrcode'],
     hookspath=[],
