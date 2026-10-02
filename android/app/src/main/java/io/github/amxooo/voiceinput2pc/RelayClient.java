@@ -1,5 +1,6 @@
 package io.github.amxooo.voiceinput2pc;
 
+import android.content.Context;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -16,11 +17,24 @@ public final class RelayClient implements RelayTransport {
     private final String token;
     private final int port;
     private final SSLContext context;
+    private final String forcedHost;
 
     public RelayClient(PairingConfig pairing) throws Exception {
+        this(null, pairing);
+    }
+
+    public RelayClient(Context androidContext, PairingConfig pairing) throws Exception {
         if (pairing == null) throw new IllegalArgumentException("连接配置缺失");
         token = pairing.token;
-        port = pairing.port;
+        if (pairing.isTailcat()) {
+            TailcatForwarder forwarder = TailcatForwarder.getOrStart(
+                    androidContext, pairing.tailcatAddress, pairing.port);
+            port = forwarder.localPort();
+            forcedHost = "127.0.0.1";
+        } else {
+            port = pairing.port;
+            forcedHost = null;
+        }
         final String fingerprint = pairing.fingerprint;
         context = SSLContext.getInstance("TLS");
         context.init(null, new TrustManager[]{new X509TrustManager() {
@@ -61,15 +75,16 @@ public final class RelayClient implements RelayTransport {
     }
 
     private JSONObject request(String host, String path, JSONObject body) throws Exception {
-        if (!host.matches("[A-Za-z0-9.-]+")) throw new Exception("电脑地址格式不正确");
-        URL url = new URL("https://" + host + ":" + port + path);
+        String target = forcedHost == null ? host : forcedHost;
+        if (!target.matches("[A-Za-z0-9.-]+")) throw new Exception("电脑地址格式不正确");
+        URL url = new URL("https://" + target + ":" + port + path);
         HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
         conn.setSSLSocketFactory(context.getSocketFactory());
-        // Server identity is checked against the exact bundled certificate, not a DNS name.
+        // Server identity is pinned to the bundled certificate fingerprint, not the tunnel hostname.
         conn.setHostnameVerifier((name, session) -> true);
         conn.setInstanceFollowRedirects(false);
-        conn.setConnectTimeout(5000);
-        conn.setReadTimeout(7000);
+        conn.setConnectTimeout(7000);
+        conn.setReadTimeout(9000);
         conn.setRequestProperty("Authorization", "Bearer " + token);
         conn.setRequestProperty("Connection", "close");
         try {
