@@ -10,6 +10,7 @@ from receiver.tailcat import TailcatServer
 
 
 class TailcatServerTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX fake executable fixture")
     def test_sidecar_extracts_address_and_stops_cleanly(self):
         with tempfile.TemporaryDirectory() as folder:
             fake = Path(folder) / "tailcat"
