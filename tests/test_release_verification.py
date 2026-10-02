@@ -37,7 +37,7 @@ class ReleaseArtifactVerificationTests(unittest.TestCase):
             apk = Path(folder) / 'app.apk'
             self.write_zip(windows, {
                 'VoiceInput2PCReceiver.exe': b'exe',
-                'tailcat.exe': b'tailcat',
+                '_internal/tailcat/tailcat.exe': b'tailcat',
                 '_internal/library.dat': b'public runtime',
                 '使用说明.txt': '公开说明'.encode('utf-8'),
             })
