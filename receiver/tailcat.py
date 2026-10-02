@@ -1,7 +1,8 @@
-"""Optional Tailcat sidecar for cross-network pairing.
+"""Internal Tailcat runtime for VoiceInput2PC cross-network pairing.
 
-The Tailcat address is connection-sensitive. This module deliberately does not
-log it, persist it, or expose it outside the pairing UI.
+Tailcat is an implementation detail. VoiceInput2PC always launches it with an
+ephemeral identity so the app never depends on, reads, or mutates a user's
+standalone Tailcat configuration.
 """
 
 from __future__ import annotations
@@ -45,6 +46,12 @@ def find_tailcat() -> Path | None:
     return None
 
 
+def _safe_diagnostic(line: str) -> str:
+    text = _ADDRESS.sub('tc<redacted>', (line or '').strip())
+    # Keep UI diagnostics useful while avoiding giant network dumps.
+    return text[:400]
+
+
 class TailcatServer:
     def __init__(self, port: int):
         self.port = int(port)
@@ -52,21 +59,24 @@ class TailcatServer:
         self.address: str | None = None
         self._lines: queue.Queue[str] = queue.Queue()
         self._reader: threading.Thread | None = None
+        self._diagnostics: list[str] = []
 
     @staticmethod
     def available() -> bool:
         return find_tailcat() is not None
 
-    def start(self, timeout: float = 12.0) -> str:
+    def start(self, timeout: float = 15.0) -> str:
         if self.process is not None and self.process.poll() is None and self.address:
             return self.address
         binary = find_tailcat()
         if binary is None:
-            raise TailcatUnavailable('当前接收端未包含 Tailcat 组件')
+            raise TailcatUnavailable('当前接收端未包含跨网络组件')
 
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        # --key=new is important: the embedded runtime must never consume a user's
+        # standalone Tailcat default key/config. --json makes address output stable.
         self.process = subprocess.Popen(
-            [str(binary), 'serve', str(self.port)],
+            [str(binary), '--key=new', '--json', 'serve', str(self.port)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
@@ -80,8 +90,13 @@ class TailcatServer:
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.process.poll() is not None:
-                raise TailcatUnavailable('Tailcat 启动失败')
+            code = self.process.poll()
+            if code is not None:
+                if self._reader is not None:
+                    self._reader.join(timeout=0.3)
+                detail = self._diagnostic_summary()
+                suffix = f'（退出码 {code}' + (f'：{detail}' if detail else '') + '）'
+                raise TailcatUnavailable('跨网络组件启动失败' + suffix)
             try:
                 line = self._lines.get(timeout=0.25)
             except queue.Empty:
@@ -91,7 +106,9 @@ class TailcatServer:
                 self.address = match.group(1)
                 return self.address
         self.stop()
-        raise TailcatUnavailable('Tailcat 建立跨网络监听超时')
+        detail = self._diagnostic_summary()
+        raise TailcatUnavailable(
+            '跨网络连接建立超时' + (f'：{detail}' if detail else ''))
 
     def _drain(self):
         stream = self.process.stdout if self.process is not None else None
@@ -99,9 +116,17 @@ class TailcatServer:
             return
         try:
             for line in stream:
+                safe = _safe_diagnostic(line)
+                if safe:
+                    self._diagnostics.append(safe)
+                    if len(self._diagnostics) > 6:
+                        del self._diagnostics[0]
                 self._lines.put(line)
         except (OSError, ValueError):
             return
+
+    def _diagnostic_summary(self) -> str:
+        return ' | '.join(self._diagnostics[-3:])
 
     def stop(self):
         process = self.process
