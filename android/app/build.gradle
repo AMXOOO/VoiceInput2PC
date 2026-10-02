@@ -28,6 +28,9 @@ android {
         versionName '0.4.0'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
     }
+    packagingOptions {
+        doNotStrip "**/libtailcat.so"
+    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
