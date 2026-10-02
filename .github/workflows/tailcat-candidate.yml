@@ -75,6 +75,13 @@ jobs:
         shell: pwsh
         run: .\scripts\build_windows_release.ps1
 
+      - name: Smoke-test embedded Tailcat from final Windows ZIP
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP 'voiceinput2pc-tailcat-smoke'
+          Expand-Archive -LiteralPath 'release/output/windows-v0.4.0/VoiceInput2PC-Windows-v0.4.0.zip' -DestinationPath $testRoot -Force
+          .\.venv\Scripts\python.exe scripts\verify_tailcat_runtime.py (Join-Path $testRoot '_internal\tailcat\tailcat.exe')
+
       - uses: actions/upload-artifact@v4
         with:
           name: VoiceInput2PC-Tailcat-Windows-candidate
