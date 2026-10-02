@@ -30,7 +30,8 @@ def find_tailcat() -> Path | None:
     candidates = []
     if override:
         candidates.append(Path(override))
-    candidates.append(Path(sys.executable).resolve().parent / 'tailcat.exe')
+    bundle_root = Path(getattr(sys, '_MEIPASS', Path(sys.executable).resolve().parent))
+    candidates.append(bundle_root / 'tailcat' / 'tailcat.exe')
     candidates.append(Path(__file__).resolve().parents[1] / 'vendor' / 'tailcat' / 'windows' / 'tailcat.exe')
     command = shutil.which('tailcat')
     if command:
