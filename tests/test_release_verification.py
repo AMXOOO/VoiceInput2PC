@@ -37,12 +37,14 @@ class ReleaseArtifactVerificationTests(unittest.TestCase):
             apk = Path(folder) / 'app.apk'
             self.write_zip(windows, {
                 'VoiceInput2PCReceiver.exe': b'exe',
+                'tailcat.exe': b'tailcat',
                 '_internal/library.dat': b'public runtime',
                 '使用说明.txt': '公开说明'.encode('utf-8'),
             })
             self.write_zip(apk, {
                 'AndroidManifest.xml': b'manifest',
                 'classes.dex': b'dex',
+                'lib/arm64-v8a/libtailcat.so': b'tailcat',
             })
             verify_archive(windows, windows=True)
             verify_archive(apk, apk=True)
