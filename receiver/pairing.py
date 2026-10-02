@@ -239,7 +239,7 @@ def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
     cert = (x509.CertificateBuilder()
             .subject_name(subject)
             .issuer_name(subject)
-            .public_key(key)
+            .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(minutes=5))
             .not_valid_after(now + datetime.timedelta(days=3650))
