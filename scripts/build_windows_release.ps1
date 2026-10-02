@@ -72,9 +72,6 @@ try {
         foreach ($item in (Get-ChildItem -LiteralPath $bundle -Force)) {
             Copy-Item -LiteralPath $item.FullName -Destination $temporary -Recurse
         }
-        $tailcatExe = Join-Path $project 'vendor\tailcat\windows\tailcat.exe'
-        if (-not (Test-Path -LiteralPath $tailcatExe)) { throw 'Tailcat Windows sidecar is missing.' }
-        Copy-Item -LiteralPath $tailcatExe -Destination (Join-Path $temporary 'tailcat.exe')
         Copy-Item -LiteralPath (Join-Path $project 'release\使用说明.txt') -Destination $temporary
         $inputs = @(Get-ChildItem -LiteralPath $temporary -Force | ForEach-Object FullName)
         Compress-Archive -LiteralPath $inputs -DestinationPath $packagePath -CompressionLevel Optimal
@@ -97,7 +94,7 @@ try {
         $packagedExe = Join-Path $verification 'VoiceInput2PCReceiver.exe'
         $packagedTcl = Join-Path $verification '_internal\_tcl_data\init.tcl'
         $packagedInstructions = Join-Path $verification '使用说明.txt'
-        $packagedTailcat = Join-Path $verification 'tailcat.exe'
+        $packagedTailcat = Join-Path $verification '_internal\tailcat\tailcat.exe'
         foreach ($required in @($packagedExe, $packagedTcl, $packagedInstructions, $packagedTailcat)) {
             if (-not (Test-Path -LiteralPath $required)) {
                 throw "Packaged Windows archive is missing: $required"
