@@ -139,7 +139,13 @@ try {
         throw 'The Android APK permission set is not exactly INTERNET.'
     }
     $apkEntries = @(& $aapt list $apk)
-    if ($LASTEXITCODE -ne 0 -or ($apkEntries -match '(^|/)pairing\.json
+    if ($LASTEXITCODE -ne 0 -or ($apkEntries -match '(^|/)pairing\.json$')) {
+        throw 'The Android APK contains a private pairing asset.'
+    }
+    if (-not ($apkEntries -contains 'lib/arm64-v8a/libtailcat.so')) {
+        throw 'The Android APK is missing the Tailcat arm64 sidecar.'
+    }
+
     $output = Join-Path $project 'release\output'
     $releaseRoot = (Resolve-Path (Join-Path $project 'release')).Path
     $resolvedOutput = [IO.Path]::GetFullPath($output)
@@ -199,100 +205,6 @@ try {
                 (Join-Path $verification '_internal\_tcl_data\init.tcl'),
                 (Join-Path $verification '使用说明.txt'),
                 (Join-Path $verification 'tailcat.exe'))) {
-            if (-not (Test-Path -LiteralPath $required)) {
-                throw "Packaged Windows archive is missing: $required"
-            }
-        }
-        Invoke-Checked $python @('scripts\verify_first_run_ui.py', $packagedExe)
-        Invoke-Checked $python @('scripts\verify_receiver_runtime.py', $packagedExe)
-    } finally {
-        $resolvedVerification = [IO.Path]::GetFullPath($verification)
-        $generatedRoot = [IO.Path]::GetFullPath((Join-Path $project 'build')) + [IO.Path]::DirectorySeparatorChar
-        if ($resolvedVerification.StartsWith($generatedRoot, [StringComparison]::OrdinalIgnoreCase) -and
-                [IO.Directory]::Exists($resolvedVerification)) {
-            Get-ChildItem -LiteralPath $resolvedVerification -Recurse -Force | ForEach-Object {
-                $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly)
-            }
-            [IO.Directory]::Delete($resolvedVerification, $true)
-        }
-    }
-
-    $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publicApk).Hash.ToLowerInvariant()
-    $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publicZip).Hash.ToLowerInvariant()
-    [IO.File]::WriteAllText((Join-Path $resolvedOutput $sumName),
-        "$apkHash  $apkName`r`n$zipHash  $zipName`r`n", [Text.UTF8Encoding]::new($false))
-    $actualNames = @(Get-ChildItem -LiteralPath $resolvedOutput -File | Sort-Object Name |
-        ForEach-Object Name)
-    $expectedNames = @($sumName, $apkName, $zipName) | Sort-Object
-    if (($actualNames -join "`n") -ne ($expectedNames -join "`n")) {
-        throw 'Release output contains unexpected files.'
-    }
-    Write-Output "Public release artifacts created in $resolvedOutput"
-} finally {
-    Pop-Location
-}
-)) {
-        throw 'The Android APK contains a private pairing asset.'
-    }
-    if (-not ($apkEntries -contains 'lib/arm64-v8a/libtailcat.so')) {
-        throw 'The Android APK is missing the Tailcat arm64 sidecar.'
-    }
-
-    $output = Join-Path $project 'release\output'
-    $releaseRoot = (Resolve-Path (Join-Path $project 'release')).Path
-    $resolvedOutput = [IO.Path]::GetFullPath($output)
-    if (-not $resolvedOutput.StartsWith($releaseRoot + [IO.Path]::DirectorySeparatorChar,
-            [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Unexpected release output path.'
-    }
-    Clear-GeneratedReadOnly $resolvedOutput
-    if ([IO.Directory]::Exists($resolvedOutput)) { [IO.Directory]::Delete($resolvedOutput, $true) }
-    [IO.Directory]::CreateDirectory($resolvedOutput) | Out-Null
-
-    $apkName = 'VoiceInput2PC-Android-v0.4.0.apk'
-    $zipName = 'VoiceInput2PC-Windows-v0.4.0.zip'
-    $sumName = 'SHA256SUMS.txt'
-    $publicApk = Join-Path $resolvedOutput $apkName
-    $publicZip = Join-Path $resolvedOutput $zipName
-    Copy-Item -LiteralPath $apk -Destination $publicApk
-
-    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('VoiceInput2PC-release-' + [guid]::NewGuid().ToString('N'))
-    [IO.Directory]::CreateDirectory($temporary) | Out-Null
-    try {
-        foreach ($item in (Get-ChildItem -LiteralPath $bundle -Force)) {
-            Copy-Item -LiteralPath $item.FullName -Destination $temporary -Recurse
-        }
-        $quickStarts = @(Get-ChildItem -LiteralPath (Join-Path $project 'release') -File -Filter '*.txt')
-        if ($quickStarts.Count -ne 1) { throw 'Expected exactly one tracked quick-start text file.' }
-        Copy-Item -LiteralPath $quickStarts[0].FullName -Destination $temporary
-        $zipInputs = @(Get-ChildItem -LiteralPath $temporary -Force | ForEach-Object FullName)
-        Compress-Archive -LiteralPath $zipInputs -DestinationPath $publicZip -CompressionLevel Optimal
-    } finally {
-        $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-        $resolvedTemporary = [IO.Path]::GetFullPath($temporary)
-        if ($resolvedTemporary.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and
-                [IO.Directory]::Exists($resolvedTemporary)) {
-            Get-ChildItem -LiteralPath $resolvedTemporary -Recurse -Force | ForEach-Object {
-                $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly)
-            }
-            $temporaryItem = Get-Item -LiteralPath $resolvedTemporary
-            $temporaryItem.Attributes = $temporaryItem.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly)
-            [IO.Directory]::Delete($resolvedTemporary, $true)
-        }
-    }
-
-    Invoke-Checked $python @('scripts\verify_release_artifacts.py',
-        '--apk', $publicApk, '--windows', $publicZip)
-
-    $verification = Join-Path $project ('build\public-package-check-' + [guid]::NewGuid().ToString('N'))
-    [IO.Directory]::CreateDirectory($verification) | Out-Null
-    try {
-        Expand-Archive -LiteralPath $publicZip -DestinationPath $verification
-        $packagedExe = Join-Path $verification 'VoiceInput2PCReceiver.exe'
-        foreach ($required in @(
-                $packagedExe,
-                (Join-Path $verification '_internal\_tcl_data\init.tcl'),
-                (Join-Path $verification '使用说明.txt'))) {
             if (-not (Test-Path -LiteralPath $required)) {
                 throw "Packaged Windows archive is missing: $required"
             }
