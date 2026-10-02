@@ -119,18 +119,25 @@ class TailcatServer:
                 pass
 
 
-_ACTIVE: list[TailcatServer] = []
+_ACTIVE: dict[int, TailcatServer] = {}
 
 
-def keep_alive(server: TailcatServer) -> TailcatServer:
-    if server not in _ACTIVE:
-        _ACTIVE.append(server)
+def get_or_start(port: int) -> TailcatServer:
+    existing = _ACTIVE.get(int(port))
+    if existing is not None and existing.process is not None and existing.process.poll() is None:
+        if existing.address is None:
+            existing.start()
+        return existing
+    server = TailcatServer(port)
+    server.start()
+    _ACTIVE[int(port)] = server
     return server
 
 
 def stop_all():
     while _ACTIVE:
-        _ACTIVE.pop().stop()
+        _, server = _ACTIVE.popitem()
+        server.stop()
 
 
 atexit.register(stop_all)
