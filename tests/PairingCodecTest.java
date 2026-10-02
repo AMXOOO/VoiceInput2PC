@@ -51,19 +51,38 @@ public final class PairingCodecTest {
         check(!config.toString().contains(fingerprint));
         check(!uri.endsWith("="));
 
+        String tailcatAddress = "tc" + repeat("Z", 64);
+        PairingConfig tailcat = new PairingConfig(
+                "192.168.1.20", 23337, token, fingerprint,
+                PairingConfig.TRANSPORT_TAILCAT, tailcatAddress);
+        String tailcatUri = PairingCodec.encode(tailcat);
+        check(PairingCodec.decode(tailcatUri).equals(tailcat));
+        check(tailcatUri.equals(payload("2\ntailcat\n192.168.1.20\n23337\n"
+                + token + "\n" + fingerprint + "\n" + tailcatAddress)));
+        check(!tailcat.toString().contains(tailcatAddress));
+        check(tailcat.isTailcat());
+
         invalidUri("");
         invalidUri("https://example.com");
         invalidUri(payload("2\npc.lan\n23337\n" + token + "\n" + fingerprint));
         invalidUri(payload("1\npc.lan\n23337\n" + token + "\n" + fingerprint + "\nextra"));
         invalidUri(payload("1\npc\u0000lan\n23337\n" + token + "\n" + fingerprint));
         invalidUri("voiceinput2pc://pair?p=bad");
-        invalidUri("voiceinput2pc://pair?p=" + repeat("A", 5000));
+        invalidUri("voiceinput2pc://pair?p=" + repeat("A", 9000));
 
         invalidConfig("bad host", 23337, token, fingerprint);
         invalidConfig("pc.lan", 0, token, fingerprint);
         invalidConfig("pc.lan", 65536, token, fingerprint);
         invalidConfig("pc.lan", 23337, "short", fingerprint);
         invalidConfig("pc.lan", 23337, token, "NOT-A-FINGERPRINT");
+
+        try {
+            new PairingConfig("pc.lan", 23337, token, fingerprint,
+                    PairingConfig.TRANSPORT_TAILCAT, "bad");
+            throw new AssertionError("accepted invalid Tailcat address");
+        } catch (IllegalArgumentException expected) {
+            checks++;
+        }
 
         System.out.println(checks + " pairing checks passed");
     }
