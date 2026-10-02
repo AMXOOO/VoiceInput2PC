@@ -65,12 +65,14 @@ def verify_archive(path, *, windows=False, apk=False):
                 raise VerificationError(f'private-key marker in {path.name}: {name}')
 
         if windows:
-            required = ('VoiceInput2PCReceiver.exe', 'tailcat.exe', '使用说明.txt')
+            required = ('VoiceInput2PCReceiver.exe', '使用说明.txt')
             for name in required:
                 if name not in names:
                     raise VerificationError(f'Windows archive is missing {name}')
             if not any(name.startswith('_internal/') for name in names):
                 raise VerificationError('Windows archive is missing _internal runtime files')
+            if '_internal/tailcat/tailcat.exe' not in names:
+                raise VerificationError('Windows archive is missing embedded Tailcat runtime')
         if apk:
             for name in ('AndroidManifest.xml', 'classes.dex', 'lib/arm64-v8a/libtailcat.so'):
                 if name not in names:
