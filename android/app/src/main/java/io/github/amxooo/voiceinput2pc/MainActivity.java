@@ -137,7 +137,7 @@ public class MainActivity extends Activity {
         say("正在核对电脑身份和连接凭据…", false);
         worker.execute(() -> {
             try {
-                RelayTransport candidateClient = new RelayClient(candidate);
+                RelayTransport candidateClient = new RelayClient(this, candidate);
                 JSONObject result = candidateClient.request(candidate.host, null);
                 if (!Boolean.TRUE.equals(result.opt("ok"))
                         || !"VoiceInput2PC".equals(result.optString("app"))
@@ -172,7 +172,7 @@ public class MainActivity extends Activity {
         setTitle("语音输入电脑");
         try {
             host = prefs.getString("host", pairing.host);
-            client = new RelayClient(pairing);
+            client = new RelayClient(this, pairing);
         } catch (Exception invalid) {
             showPairingScreen("保存的连接配置无法使用，请重新配对。");
             return;
