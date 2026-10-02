@@ -26,6 +26,10 @@ Windows
 - Android App
 - 二维码配对
 
+用户不需要安装 Tailcat，不需要配置 Tailcat，也不需要运行 Tailcat 命令。
+Windows 打包时 Tailcat 被收入 VoiceInput2PC 的内部 runtime 目录；
+Android 打包时 Tailcat 被收入 APK 的 native runtime。
+
 不需要手工使用 Tailcat CLI。
 
 ## 为什么这样集成
