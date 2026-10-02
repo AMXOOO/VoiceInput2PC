@@ -170,9 +170,6 @@ try {
         foreach ($item in (Get-ChildItem -LiteralPath $bundle -Force)) {
             Copy-Item -LiteralPath $item.FullName -Destination $temporary -Recurse
         }
-        $tailcatExe = Join-Path $project 'vendor\tailcat\windows\tailcat.exe'
-        if (-not (Test-Path -LiteralPath $tailcatExe)) { throw 'Tailcat Windows sidecar is missing.' }
-        Copy-Item -LiteralPath $tailcatExe -Destination (Join-Path $temporary 'tailcat.exe')
         $quickStarts = @(Get-ChildItem -LiteralPath (Join-Path $project 'release') -File -Filter '*.txt')
         if ($quickStarts.Count -ne 1) { throw 'Expected exactly one tracked quick-start text file.' }
         Copy-Item -LiteralPath $quickStarts[0].FullName -Destination $temporary
@@ -204,7 +201,7 @@ try {
                 $packagedExe,
                 (Join-Path $verification '_internal\_tcl_data\init.tcl'),
                 (Join-Path $verification '使用说明.txt'),
-                (Join-Path $verification 'tailcat.exe'))) {
+                (Join-Path $verification '_internal\tailcat\tailcat.exe'))) {
             if (-not (Test-Path -LiteralPath $required)) {
                 throw "Packaged Windows archive is missing: $required"
             }
