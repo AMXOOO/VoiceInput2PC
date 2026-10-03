@@ -91,6 +91,20 @@ public final class RelayClient implements RelayTransport {
         return request(host, "/file/complete", new JSONObject().put("id", transferId));
     }
 
+    public JSONObject pendingFile(String host) throws Exception {
+        return request(host, "/file-outbox", null);
+    }
+
+    public JSONObject fileOutboxChunk(String host, String id, long offset) throws Exception {
+        return request(host, "/file-outbox/chunk",
+                new JSONObject().put("id", id).put("offset", offset));
+    }
+
+    public JSONObject acknowledgeFile(String host, String id, String sha256) throws Exception {
+        return request(host, "/file-outbox/ack",
+                new JSONObject().put("id", id).put("sha256", sha256));
+    }
+
     public JSONObject fileChunk(String host, String transferId, long offset,
                                 byte[] data, int length) throws Exception {
         if (data == null || length <= 0 || length > data.length || length > 1024 * 1024) {
