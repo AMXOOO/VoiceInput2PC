@@ -32,15 +32,8 @@ jobs:
         with:
           go-version: '1.27.1'
 
-      - name: Install pinned gomobile
-        run: go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
-
       - name: Build Tailcat Android Go bridge
-        working-directory: mobile/tailcatbridge
-        run: |
-          gomobile init
-          mkdir -p ../../android/app/libs
-          gomobile bind -target=android/arm64 -androidapi=26 -javapkg=io.github.amxooo.voiceinput2pc -o ../../android/app/libs/tailcatbridge.aar .
+        run: python scripts/build_tailcat_android_bridge.py
 
       - name: Install Python test dependencies
         run: python -m pip install cryptography
