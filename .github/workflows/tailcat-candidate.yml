@@ -56,14 +56,16 @@ jobs:
             tests/PairingCodecTest.java
           java -cp tests/java-build io.github.amxooo.voiceinput2pc.PairingCodecTest
 
-      - name: Fetch pinned Tailcat artifacts
-        run: python scripts/fetch_tailcat.py
-
       - name: Build Android debug APK
         run: gradle -p android :app:assembleDebug --no-daemon
 
-      - name: Verify Tailcat is packaged in APK
-        run: unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/arm64-v8a/libtailcat.so'
+      - name: Verify Tailcat Go bridge is packaged in APK
+        run: |
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/arm64-v8a/'
+          if unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'libtailcat.so'; then
+            echo "legacy Tailcat CLI is still packaged" >&2
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
