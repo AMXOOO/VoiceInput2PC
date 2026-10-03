@@ -88,19 +88,7 @@ try {
 
     $python = Resolve-Python
     Invoke-Checked $python @('scripts\fetch_tailcat.py')
-    $go = (Get-Command go.exe -ErrorAction SilentlyContinue)
-    if (-not $go) { $go = (Get-Command go -ErrorAction SilentlyContinue) }
-    if (-not $go) { throw 'Go 1.27+ is required to build the Android Tailcat bridge.' }
-    $gomobile = (Get-Command gomobile.exe -ErrorAction SilentlyContinue)
-    if (-not $gomobile) { $gomobile = (Get-Command gomobile -ErrorAction SilentlyContinue) }
-    if (-not $gomobile) { throw 'gomobile is required to build the Android Tailcat bridge.' }
-    New-Item -ItemType Directory -Force -Path 'android\app\libs' | Out-Null
-    Push-Location 'mobile\tailcatbridge'
-    try {
-        Invoke-Checked $gomobile.Source @('bind','-target=android/arm64','-androidapi=26',
-            '-javapkg=io.github.amxooo.voiceinput2pc',
-            '-o','..\..\android\app\libs\tailcatbridge.aar','.')
-    } finally { Pop-Location }
+    Invoke-Checked $python @('scripts\\build_tailcat_android_bridge.py')
     $gradle = Resolve-Gradle
     if ([string]::IsNullOrWhiteSpace($env:JAVA_HOME)) { throw 'JAVA_HOME is required.' }
     $javac = Join-Path $env:JAVA_HOME 'bin\javac.exe'
