@@ -1,181 +1,98 @@
-# VoiceInput2PC v0.5 Tailcat Transport Candidate
+# VoiceInput2PC v0.5.0｜内置跨网络传输
 
-状态：IMPLEMENTED / CI + REAL DEVICE GATES
+状态：CURRENT / REAL-DEVICE VERIFIED
+更新：2026-10-03
 
 ## 产品变化
 
 v0.4.0：
 
+```text
 Android
 → LAN HTTPS
 → Windows
+```
 
-v0.5 Candidate：
+v0.5.0：
 
+```text
 Android
-→ Transport Resolver
+→ Transport
 ├─ LAN HTTPS
-└─ Tailcat encrypted tunnel
-       ↓
-     HTTPS application protocol
-       ↓
-Windows
+└─ Tailcat Go Bridge
+      ↓ WireGuard / NAT traversal / DERP fallback
+→ HTTPS + token + certificate fingerprint
+→ Windows
+```
 
-用户仍然只使用：
-- Windows 接收端
-- Android App
-- 二维码配对
-
-用户不需要安装 Tailcat，不需要配置 Tailcat，也不需要运行 Tailcat 命令。
-Windows 打包时 Tailcat 被收入 VoiceInput2PC 的内部 runtime 目录；
-Android 打包时 Tailcat 被收入 APK 的 native runtime。
-
-不需要手工使用 Tailcat CLI。
-
-## 为什么这样集成
-
-Tailcat 不替代 VoiceInput2PC 协议。
-
-VoiceInput2PC 继续负责：
-- Token
-- Certificate fingerprint pinning
-- Session
-- Message ID / dedup
-- Reverse outbox
-- Draft protection
-- Windows current-target safety
-
-Tailcat 只负责：
-- NAT traversal
-- WireGuard encrypted peer path
-- DERP relay fallback
-- 把远程 23337 映射到 Android localhost
-
-因此 Tailcat 出问题时，LAN HTTPS 可以继续存在。
-
-## 配对兼容
-
-### v1
-保持 v0.4.x 原格式：
-
-1
-host
-port
-token
-fingerprint
-
-LAN 用户继续使用 v1。
-
-### v2
-只用于 Tailcat：
-
-2
-tailcat
-host
-port
-token
-fingerprint
-tailcat-address
-
-Tailcat address 视为敏感连接信息：
-- 不记录日志
-- 不写 README 示例真实值
-- 不进入公开诊断
-- 对象 repr/toString 必须 redacted
+用户只需要 VoiceInput2PC Android + Windows 两端，不需要单独安装 Tailcat/Tailscale。
 
 ## Windows
 
-接收端新增可选 Tailcat sidecar。
+Tailcat v0.7.0 作为内部运行组件随 Windows 包分发。
 
-配对窗口：
-- 默认继续显示 LAN QR
-- 用户点击“跨网络配对”
-- 接收端启动 bundled tailcat.exe
-- 获取临时 Tailcat address
-- 生成 v2 QR
-
-Windows HTTPS server 本身保持不变。
+运行时：
+- VoiceInput2PC 启动内部 Tailcat；
+- Tailcat 只负责跨网络数据通道；
+- VoiceInput2PC 原 HTTPS、Token、证书指纹校验继续保留；
+- 最终 Windows ZIP 会在 CI 中解压并实际启动内部 Tailcat，拿到有效地址才算 PASS。
 
 ## Android
 
-APK 内嵌官方 Tailcat arm64 Linux static binary。
+早期候选方案使用 `ProcessBuilder` 运行 Linux arm64 Tailcat CLI。
 
-运行时：
-- App 读取 v2 pairing
-- App 启动 Tailcat sidecar
-- sidecar forward:
-  remote VoiceInput2PC port → 127.0.0.1:ephemeral
-- RelayClient 对 localhost 继续发原 HTTPS 请求
-- TLS certificate identity 继续按 fingerprint 验证
+真机发现 Android 普通 App 沙箱会导致网络接口枚举失败：
 
-## Supply-chain
+```text
+netmon.New ... netlinkrib: permission denied
+```
 
-Tailcat binary 不提交 Git。
+该方案已废弃。
 
-构建脚本：
-1. 固定 Tailcat release 版本
-2. 下载官方 checksums.txt
-3. 先验证 checksum manifest 的 pinned SHA-256
-4. 再验证 Windows / Linux arm64 asset SHA-256
-5. 解包进入构建目录
-6. Windows ZIP 和 Android APK 都验证 sidecar 存在
+当前方案：
 
-## 当前验证
+```text
+Android Java
+→ java.net.NetworkInterface
+→ gomobile reverse binding
+→ netmon.RegisterInterfaceGetter
+→ Tailcat Go Library
+→ localhost forward
+→ VoiceInput2PC HTTPS
+```
+
+Tailcat 被编译为 Android AAR，通过 Go Bridge 在 App 进程内运行，不再启动外部 CLI。
+
+## 真机验证
 
 已验证：
-- Python v1/v2 pairing
-- Java v1/v2 pairing
-- v1 pairing backward compatibility
-- Tailcat address redaction
-- Tailcat asset checksum verification
-- Android Debug APK build
-- APK contains arm64 Tailcat sidecar
+- Windows 内部 Tailcat 能实际启动；
+- Android Go Bridge AAR 构建；
+- Android Java → Go 网络接口注入；
+- OnePlus 15 真机扫码建立跨网络连接；
+- Windows ↔ Android 配对闭环；
+- v1 LAN pairing 向后兼容；
+- v2 cross-network pairing；
+- Token / certificate fingerprint 二次验证继续生效。
 
-待验证：
-- Windows candidate package build
-- Windows sidecar actual start
-- Android app sandbox 是否允许执行 bundled Tailcat static binary
-- Android ↔ Windows real cross-network tunnel
-- text send
-- reverse receive
-- network switching
-- reconnect
-- battery / latency
+## 安全
 
-## 最重要的 Gate
+以下内容按敏感连接凭据处理：
+- 完整 `voiceinput2pc://pair?p=...`；
+- Token；
+- 完整证书指纹；
+- 完整 Tailcat `tc...` 地址；
+- Windows 本机配置、私钥和消息数据库。
 
-官方 Tailcat 已明确支持 Android 下的 Termux / adb shell / rooted shell。
+要求：
+- 不提交 Git；
+- 不写公开日志；
+- 不写 README 真实示例；
+- 错误诊断对 Tailcat 地址使用 `tc<redacted>`；
+- 发布包自动扫描并拒绝敏感配对材料。
 
-但：
+## 已知限制
 
-> 普通 Android App sandbox 内直接执行被 APK 解包的 Tailcat static binary，仍必须以 OnePlus 15 真机结果为准。
+当前跨网络 Tailcat 地址采用临时身份。Windows 接收端重启后，跨网络连接可能需要重新打开“跨网络配对”并扫码。
 
-因此在完成真机前：
-
-不得合并 main。
-不得发布 v0.5.0。
-不得标 VERIFIED。
-
-## Fallback
-
-如果普通 App sandbox 不允许执行 Tailcat binary：
-
-优先路线不是要求用户手工打开 Termux。
-
-下一路线：
-
-Tailcat Go library
-→ Android-compatible native bridge / JNI
-→ App 内嵌 Transport Provider
-
-保持上层 Pairing / RelayTransport / VoiceInput2PC Protocol 不变。
-
-## 当前开发位置
-
-Branch:
-feat/tailcat-transport-v0.5
-
-Draft PR:
-#1
-
-main 保持 v0.4.0 稳定版。
+这是 v0.5.0 已知产品限制，后续可将 Tailcat 身份迁移到 VoiceInput2PC 私有配置目录，实现稳定地址和自动重连。
