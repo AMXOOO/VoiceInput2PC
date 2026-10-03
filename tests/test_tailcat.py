@@ -49,8 +49,8 @@ class TailcatServerTests(unittest.TestCase):
                 second.stop()
 
             lines = calls.read_text(encoding="utf-8").splitlines()
-            genkeys = [line for line in lines if "genkey" in line]
-            serves = [line for line in lines if "serve" in line]
+            genkeys = [line for line in lines if "genkey" in line.split()]
+            serves = [line for line in lines if "serve" in line.split()]
             self.assertEqual(1, len(genkeys))
             self.assertEqual(2, len(serves))
             self.assertTrue(all(str(key) in line for line in serves))
