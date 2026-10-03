@@ -20,6 +20,7 @@ from receiver.http_server import make_server
 from receiver.file_transfer import FileTransferManager
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
+from receiver.tailcat import get_or_start
 from receiver.win_input import type_text, capture_target, copy_text
 
 
@@ -163,6 +164,21 @@ def main():
         root.destroy()
         kernel.CloseHandle(mutex)
         return
+
+    def start_remote_transport():
+        try:
+            get_or_start(
+                current_pairing.port,
+                folder / 'tailcat-server.private.json')
+        except Exception:
+            # LAN mode must remain usable even if remote transport bootstrap is
+            # temporarily unavailable. Pairing/next startup can retry.
+            return
+
+    threading.Thread(
+        target=start_remote_transport,
+        name='VoiceInput2PC-remote-transport',
+        daemon=True).start()
 
     commands = queue.Queue()
     image = Image.new('RGBA', (64, 64), '#16705b')
