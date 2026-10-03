@@ -60,6 +60,8 @@ class FileTransferManagerTests(unittest.TestCase):
             digest = hashlib.sha256(b"x").hexdigest()
             bad = [
                 {"name": "../x.txt", "size": 1, "sha256": digest, "mime": "text/plain"},
+                {"name": "CON.txt", "size": 1, "sha256": digest, "mime": "text/plain"},
+                {"name": "bad?.txt", "size": 1, "sha256": digest, "mime": "text/plain"},
                 {"name": "x.txt", "size": MAX_FILE_BYTES + 1, "sha256": digest, "mime": "text/plain"},
                 {"name": "x.txt", "size": 1, "sha256": "bad", "mime": "text/plain"},
             ]
