@@ -4,7 +4,6 @@ import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .core import InvalidMessage
 from .file_transfer import FileTransferError, MAX_CHUNK_BYTES
-from urllib.parse import parse_qs, urlparse
 
 
 def make_server(address, relay, token, certificate=None, private_key=None, file_manager=None):
@@ -61,17 +60,6 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                     self.reply(200, {'ok': True, 'app': 'VoiceInput2PC', 'paused': relay.paused, 'protocol': 2, 'features': ['file-upload-v1'] if file_manager is not None else []})
                 elif self.path == '/outbox':
                     self.reply(200, relay.phone_outbox())
-                elif self.path.startswith('/file/status'):
-                    if file_manager is None:
-                        self.reply(404, {'ok': False})
-                    else:
-                        query = parse_qs(urlparse(self.path).query)
-                        transfer_id = query.get('id', [''])[0]
-                        meta = file_manager._load(transfer_id)
-                        part = file_manager._part_path(transfer_id)
-                        offset = part.stat().st_size if part.exists() else 0
-                        self.reply(200, {'ok': True, 'id': transfer_id, 'offset': offset,
-                                         'size': meta['size'], 'name': meta['name']})
                 else:
                     self.reply(404, {'ok': False})
             except FileTransferError as exc:
