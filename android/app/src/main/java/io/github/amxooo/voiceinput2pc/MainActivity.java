@@ -158,9 +158,10 @@ public class MainActivity extends Activity {
                     showTypingScreen(candidate);
                     fileTransferSupported = hasFeature(result, "file-upload-v1");
                     updateControls();
+                    String routeNote = routeNote(candidateClient);
                     say(result.optBoolean("paused")
-                            ? "已连接 · 请先在电脑启用输入，再选中输入框"
-                            : "已连接 · 先选中电脑输入框，再点开始", false);
+                            ? "已连接" + routeNote + " · 请先在电脑启用输入，再选中输入框"
+                            : "已连接" + routeNote + " · 先选中电脑输入框，再点开始", false);
                 });
             } catch (Exception failure) {
                 final String detail = pairingFailureText(failure);
@@ -175,6 +176,14 @@ public class MainActivity extends Activity {
 
     private RelayTransport createTransport(PairingConfig pairing) throws Exception {
         return pairing.isAuto() ? new ConnectionManager(this, pairing) : new RelayClient(this, pairing);
+    }
+
+    private String routeNote(RelayTransport transport) {
+        if (!(transport instanceof ConnectionManager)) return "";
+        String mode = ((ConnectionManager) transport).activeMode();
+        if ("lan".equals(mode)) return " · 本地直连";
+        if ("tailcat".equals(mode)) return " · 远程连接";
+        return "";
     }
 
     private String pairingFailureText(Exception failure) {
@@ -722,7 +731,8 @@ public class MainActivity extends Activity {
                     } else {
                         fileTransferSupported = hasFeature(result, "file-upload-v1");
                         updateControls();
-                        say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                        String routeNote = routeNote(client);
+                        say(result.optBoolean("paused") ? "已连接" + routeNote + " · 请先在电脑启用输入，再选中输入框" : "已连接" + routeNote + " · 先选中电脑输入框，再点开始",false);
                     }
                 });
             } catch(Exception e) {
