@@ -22,7 +22,7 @@ from receiver.pairing import load_pairing, prepare_receiver
 from receiver.win_input import type_text, capture_target, copy_text
 
 
-APP_VERSION = '0.4.0'
+APP_VERSION = '0.5.0'
 APP_TITLE = '语音输入电脑 · 电脑接收端'
 FIRST_RUN_TITLE = '语音输入电脑 · 首次设置'
 PAIRING_TITLE = '语音输入电脑 · 配对手机'
@@ -177,7 +177,7 @@ def main():
     container = ttk.Frame(root, padding=18)
     container.pack(fill='both', expand=True)
     ttk.Label(container, text='语音输入电脑', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
-    status = ttk.Label(container, text='正在接收 · 手机与电脑连接同一局域网')
+    status = ttk.Label(container, text='正在接收 · 手机可通过局域网或跨网络安全连接')
     status.pack(anchor='w', pady=(6, 4))
     ttk.Label(container, text='电脑点中输入位置 → 手机开始输入 → 使用手机输入法的语音按钮。').pack(anchor='w')
     ttk.Label(container, text='无需逐条发送；不按回车、不改剪贴板。切换输入位置前请先暂停。').pack(anchor='w')
@@ -202,7 +202,7 @@ def main():
         if rows:
             listing.selection_set(0)
             select()
-        status.config(text='已暂停自动输入 · 新文字仍会保存' if relay.paused else '正在接收 · 手机与电脑连接同一局域网')
+        status.config(text='已暂停自动输入 · 新文字仍会保存' if relay.paused else '正在接收 · 手机可通过局域网或跨网络安全连接')
 
     def select(*_):
         sel = listing.curselection()
