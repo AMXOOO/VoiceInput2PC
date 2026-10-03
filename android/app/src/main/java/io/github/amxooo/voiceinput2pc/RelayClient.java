@@ -20,8 +20,6 @@ public final class RelayClient implements RelayTransport {
     private final String forcedHost;
     private final int connectTimeoutMs;
     private final int readTimeoutMs;
-    private final int connectTimeoutMs;
-    private final int readTimeoutMs;
 
     public RelayClient(PairingConfig pairing) throws Exception {
         this(null, pairing, 10000, 20000);
@@ -35,8 +33,6 @@ public final class RelayClient implements RelayTransport {
                        int connectTimeoutMs, int readTimeoutMs) throws Exception {
         if (pairing == null) throw new IllegalArgumentException("连接配置缺失");
         token = pairing.token;
-        this.connectTimeoutMs = connectTimeoutMs;
-        this.readTimeoutMs = readTimeoutMs;
         this.connectTimeoutMs = connectTimeoutMs;
         this.readTimeoutMs = readTimeoutMs;
         if (pairing.isTailcat()) {
