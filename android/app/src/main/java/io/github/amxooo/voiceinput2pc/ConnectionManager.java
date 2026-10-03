@@ -80,13 +80,15 @@ public final class ConnectionManager implements RelayTransport {
             return op.run(first);
         } catch (Exception firstFailure) {
             if (!safeRetry) throw firstFailure;
+            final String failedMode;
             synchronized (this) {
+                failedMode = active == first ? activeMode : "unknown";
                 if (active == first) {
                     active = null;
                     activeMode = "none";
                 }
             }
-            RelayTransport second = resolveAlternate(first);
+            RelayTransport second = resolveAlternate(failedMode);
             try {
                 return op.run(second);
             } catch (Exception secondFailure) {
@@ -95,9 +97,9 @@ public final class ConnectionManager implements RelayTransport {
         }
     }
 
-    private synchronized RelayTransport resolveAlternate(RelayTransport failed) throws Exception {
+    private synchronized RelayTransport resolveAlternate(String failedMode) throws Exception {
         Exception last = null;
-        if ("lan".equals(activeMode) || active == null) {
+        if (!"tailcat".equals(failedMode)) {
             try {
                 RelayTransport candidate = tailcat();
                 JSONObject health = candidate.request(pairing.host, null);
@@ -108,15 +110,17 @@ public final class ConnectionManager implements RelayTransport {
                 }
             } catch (Exception failure) { last = failure; }
         }
-        try {
-            RelayTransport candidate = lan();
-            JSONObject health = candidate.request(pairing.host, null);
-            if (validHealth(health)) {
-                active = candidate;
-                activeMode = "lan";
-                return active;
-            }
-        } catch (Exception failure) { last = failure; }
+        if (!"lan".equals(failedMode)) {
+            try {
+                RelayTransport candidate = lan();
+                JSONObject health = candidate.request(pairing.host, null);
+                if (validHealth(health)) {
+                    active = candidate;
+                    activeMode = "lan";
+                    return active;
+                }
+            } catch (Exception failure) { last = failure; }
+        }
         throw last == null ? new Exception("没有可用连接") : last;
     }
 
