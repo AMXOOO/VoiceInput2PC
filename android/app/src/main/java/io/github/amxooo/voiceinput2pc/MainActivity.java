@@ -158,13 +158,24 @@ public class MainActivity extends Activity {
                             : "已连接 · 先选中电脑输入框，再点开始", false);
                 });
             } catch (Exception failure) {
+                final String detail = pairingFailureText(failure);
                 handler.post(() -> {
                     if (destroyed || pairingButton == null) return;
                     pairingButton.setEnabled(true);
-                    say("没有通过电脑验证。请确认接收端已启动，再重新扫描；原有连接没有改变。", true);
+                    say(detail, true);
                 });
             }
         });
+    }
+
+    private String pairingFailureText(Exception failure) {
+        String message = failure == null ? "" : failure.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            message = failure == null ? "未知错误" : failure.getClass().getSimpleName();
+        }
+        message = message.replaceAll("tc[A-Za-z0-9_-]{20,4094}", "tc<redacted>");
+        if (message.length() > 360) message = message.substring(0, 360);
+        return "连接失败 · " + message;
     }
 
     private void showTypingScreen(PairingConfig pairing) {
