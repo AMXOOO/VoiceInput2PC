@@ -22,6 +22,7 @@ public final class ConnectionManager implements RelayTransport {
     private String activeMode = "none";
     private String lanHost;
     private long lastLanProbeAt;
+    private boolean lanProbeInFlight;
 
     interface Operation {
         JSONObject run(RelayTransport transport, String targetHost) throws Exception;
@@ -154,26 +155,40 @@ public final class ConnectionManager implements RelayTransport {
     private void maybePreferLanAgain() {
         final String hostSnapshot;
         synchronized (this) {
-            if (!"tailcat".equals(activeMode)) return;
+            if (!"tailcat".equals(activeMode) || lanProbeInFlight) return;
             long now = System.currentTimeMillis();
             if (now - lastLanProbeAt < LAN_REPROBE_MS) return;
             lastLanProbeAt = now;
+            lanProbeInFlight = true;
             hostSnapshot = lanHost;
         }
 
-        try {
-            RelayTransport candidate = lan(hostSnapshot);
-            JSONObject health = candidate.request(hostSnapshot, null);
-            if (validHealth(health)) {
-                absorbLanHosts(health);
-                synchronized (this) {
-                    active = candidate;
-                    activeMode = "lan";
+        Thread probe = new Thread(() -> {
+            try {
+                RelayTransport candidate = lan(hostSnapshot);
+                JSONObject health = candidate.request(hostSnapshot, null);
+                if (validHealth(health)) {
+                    absorbLanHosts(health);
+                    synchronized (ConnectionManager.this) {
+                        // Switch only if the active path is still Tailcat. A
+                        // concurrent failure/recovery may already have chosen
+                        // another valid route.
+                        if ("tailcat".equals(activeMode)) {
+                            active = candidate;
+                            activeMode = "lan";
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                // Still away from the LAN; keep the working Tailcat route.
+            } finally {
+                synchronized (ConnectionManager.this) {
+                    lanProbeInFlight = false;
                 }
             }
-        } catch (Exception ignored) {
-            // Still away from the LAN; keep the working Tailcat route.
-        }
+        }, "voiceinput2pc-lan-reprobe");
+        probe.setDaemon(true);
+        probe.start();
     }
 
     private Route resolveAlternate(String failedMode) throws Exception {
