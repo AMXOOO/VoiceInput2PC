@@ -4,10 +4,11 @@ import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .core import InvalidMessage
 from .file_transfer import FileTransferError, MAX_CHUNK_BYTES
+from .file_outbox import FileOutboxError, CHUNK_BYTES as OUTBOX_CHUNK_BYTES
 from .pairing import detect_private_addresses
 
 
-def make_server(address, relay, token, certificate=None, private_key=None, file_manager=None):
+def make_server(address, relay, token, certificate=None, private_key=None, file_manager=None, file_outbox=None):
     context = None
     if certificate and private_key:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -63,14 +64,16 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                         'app': 'VoiceInput2PC',
                         'paused': relay.paused,
                         'protocol': 2,
-                        'features': ['file-upload-v1'] if file_manager is not None else [],
+                        'features': ([('file-upload-v1')] if file_manager is not None else []) + ([('file-download-v1')] if file_outbox is not None else []),
                         'lan_hosts': detect_private_addresses(),
                     })
                 elif self.path == '/outbox':
                     self.reply(200, relay.phone_outbox())
+                elif self.path == '/file-outbox':
+                    self.reply(200, file_outbox.pending() if file_outbox is not None else {'ok': True, 'file': None})
                 else:
                     self.reply(404, {'ok': False})
-            except FileTransferError as exc:
+            except (FileTransferError, FileOutboxError) as exc:
                 self.reply(400, {'ok': False, 'note': str(exc)})
             except (TimeoutError, BrokenPipeError, ConnectionResetError):
                 self.close_connection = True
@@ -81,13 +84,29 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
             if not self.authorized():
                 self.reply(401, {'ok': False, 'note': '连接凭据不匹配'})
                 return
-            if self.path not in ('/text', '/session', '/outbox/ack', '/file/begin', '/file/chunk', '/file/complete'):
+            if self.path not in ('/text', '/session', '/outbox/ack', '/file/begin', '/file/chunk', '/file/complete', '/file-outbox/chunk', '/file-outbox/ack'):
                 self.reply(404, {'ok': False})
                 return
             try:
                 if self.headers.get('Transfer-Encoding'):
                     raise InvalidMessage('不支持的请求格式')
                 length = int(self.headers.get('Content-Length', '0'))
+
+                if self.path == '/file-outbox/chunk':
+                    self.connection.settimeout(30)
+                    if file_outbox is None:
+                        self.reply(404, {'ok': False}); return
+                    if not 0 < length <= 100000:
+                        raise FileOutboxError('文件请求无效')
+                    raw = self.rfile.read(length)
+                    data = json.loads(raw.decode('utf-8'))
+                    item_id = data.get('id', '')
+                    offset = int(data.get('offset', -1))
+                    chunk, total = file_outbox.read(item_id, offset)
+                    import base64
+                    self.reply(200, {'ok': True, 'id': item_id, 'offset': offset,
+                                     'size': total, 'data': base64.b64encode(chunk).decode('ascii')})
+                    return
 
                 if self.path == '/file/chunk':
                     self.connection.settimeout(30)
@@ -114,7 +133,11 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                     raise InvalidMessage('消息不完整')
                 data = json.loads(raw.decode('utf-8'))
 
-                if self.path == '/file/begin':
+                if self.path == '/file-outbox/ack':
+                    if file_outbox is None or not isinstance(data, dict) or set(data) != {'id', 'sha256'}:
+                        raise FileOutboxError('文件确认无效')
+                    self.reply(200, file_outbox.acknowledge(data['id'], data['sha256']))
+                elif self.path == '/file/begin':
                     if file_manager is None:
                         self.reply(404, {'ok': False})
                         return
@@ -133,7 +156,7 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                     self.reply(200, relay.ack_phone_outbox(data['id']))
                 else:
                     self.reply(200, relay.accept(data))
-            except FileTransferError as exc:
+            except (FileTransferError, FileOutboxError) as exc:
                 self.reply(400, {'ok': False, 'note': str(exc)})
             except (ValueError, UnicodeError, InvalidMessage):
                 self.reply(400, {'ok': False, 'note': '消息无效，未输入'})
