@@ -24,7 +24,8 @@ public final class PairingCodec {
         } else if (config.isTailcat()) {
             raw = "2\n" + PairingConfig.TRANSPORT_TAILCAT + "\n"
                     + config.host + "\n" + config.port + "\n"
-                    + config.token + "\n" + config.fingerprint + "\n" + config.tailcatAddress;
+                    + config.token + "\n" + config.fingerprint + "\n"
+                    + config.tailcatAddress;
         } else {
             raw = "1\n" + config.host + "\n" + config.port + "\n"
                     + config.token + "\n" + config.fingerprint;
@@ -43,12 +44,14 @@ public final class PairingCodec {
                 || encoded.indexOf('?') >= 0) {
             throw new IllegalArgumentException("invalid pairing URI");
         }
+
         final byte[] bytes;
         try {
             bytes = Base64.getUrlDecoder().decode(encoded);
         } catch (IllegalArgumentException error) {
             throw new IllegalArgumentException("invalid pairing payload", error);
         }
+
         final String raw;
         try {
             raw = StandardCharsets.UTF_8.newDecoder()
@@ -59,35 +62,21 @@ public final class PairingCodec {
             throw new IllegalArgumentException("invalid pairing payload", error);
         }
 
-        if (raw.startsWith("{")) {
-            try {
-                JSONObject value = new JSONObject(raw);
-                if (value.length() != 8 || value.getInt("v") != 3) {
-                    throw new IllegalArgumentException("unsupported pairing payload");
-                }
-                return new PairingConfig(
-                        value.getString("host"),
-                        value.getInt("port"),
-                        value.getString("token"),
-                        value.getString("fingerprint"),
-                        PairingConfig.TRANSPORT_AUTO,
-                        value.getString("tailcat"),
-                        value.getString("id"),
-                        value.getString("name"));
-            } catch (IllegalArgumentException error) {
-                throw error;
-            } catch (Exception error) {
-                throw new IllegalArgumentException("invalid pairing payload", error);
-            }
-        }
-
         String[] fields = raw.split("\n", -1);
+        if (fields.length == 9 && "3".equals(fields[0])
+                && PairingConfig.TRANSPORT_AUTO.equals(fields[1])) {
+            return new PairingConfig(
+                    fields[4], parsePort(fields[5]), fields[6], fields[7],
+                    PairingConfig.TRANSPORT_AUTO, fields[8],
+                    fields[2], fields[3]);
+        }
         if (fields.length == 5 && "1".equals(fields[0])) {
             return new PairingConfig(fields[1], parsePort(fields[2]), fields[3], fields[4]);
         }
         if (fields.length == 7 && "2".equals(fields[0])
                 && PairingConfig.TRANSPORT_TAILCAT.equals(fields[1])) {
-            return new PairingConfig(fields[2], parsePort(fields[3]), fields[4], fields[5],
+            return new PairingConfig(
+                    fields[2], parsePort(fields[3]), fields[4], fields[5],
                     PairingConfig.TRANSPORT_TAILCAT, fields[6]);
         }
         throw new IllegalArgumentException("unsupported pairing payload");
