@@ -46,6 +46,17 @@ class FirstRunTests(unittest.TestCase):
             self.assertNotIn(first.token, output.getvalue())
             self.assertNotIn(first.fingerprint, output.getvalue())
 
+
+    def test_regeneration_rotates_credentials_but_keeps_device_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / 'receiver'
+            first = prepare_receiver(target, '192.168.1.20', 23337)
+            second = prepare_receiver(target, '192.168.1.20', 23337, regenerate=True)
+
+            self.assertEqual(first.device_id, second.device_id)
+            self.assertNotEqual(first.token, second.token)
+            self.assertNotEqual(first.fingerprint, second.fingerprint)
+
     def test_failed_regeneration_preserves_existing_configuration(self):
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / 'receiver'
