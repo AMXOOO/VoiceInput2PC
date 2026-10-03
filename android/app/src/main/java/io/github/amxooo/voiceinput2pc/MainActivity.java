@@ -278,6 +278,30 @@ public class MainActivity extends Activity {
         else if (tracker.hasConflict()) say("已输入部分发生修改。电脑原文不会改动，请保留并重置。",true);
         else if (!draft.isEmpty()) say("草稿已恢复，当前暂停。点开始前请核对电脑已有文字。",false);
         else health();
+        probeCapabilities();
+    }
+
+    private void probeCapabilities() {
+        final RelayTransport probeClient = client;
+        final String address = host;
+        worker.execute(() -> {
+            try {
+                JSONObject result = probeClient.request(address, null);
+                final boolean supported = Boolean.TRUE.equals(result.opt("ok"))
+                        && hasFeature(result, "file-upload-v1");
+                handler.post(() -> {
+                    if (destroyed || probeClient != client || !address.equals(host)) return;
+                    fileTransferSupported = supported;
+                    updateControls();
+                });
+            } catch (Exception ignored) {
+                handler.post(() -> {
+                    if (destroyed || probeClient != client || !address.equals(host)) return;
+                    fileTransferSupported = false;
+                    updateControls();
+                });
+            }
+        });
     }
 
     private boolean hasFeature(JSONObject result, String feature) {
