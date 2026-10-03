@@ -99,16 +99,11 @@ def validate_port(port: int) -> int:
 def encode_pairing(value: Pairing) -> str:
     validate_pairing(value)
     if value.transport == TRANSPORT_AUTO:
-        raw = json.dumps({
-            'v': 3,
-            'id': value.device_id,
-            'name': value.device_name,
-            'host': value.host,
-            'port': value.port,
-            'token': value.token,
-            'fingerprint': value.fingerprint,
-            'tailcat': value.tailcat_address,
-        }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        raw = (
+            f'3\n{TRANSPORT_AUTO}\n{value.device_id}\n{value.device_name}\n'
+            f'{value.host}\n{value.port}\n{value.token}\n{value.fingerprint}\n'
+            f'{value.tailcat_address}'
+        ).encode('utf-8')
     elif value.transport == TRANSPORT_TAILCAT:
         raw = (
             f'2\n{TRANSPORT_TAILCAT}\n{value.host}\n{value.port}\n'
@@ -136,20 +131,6 @@ def decode_pairing(uri: str) -> Pairing:
         raw = base64.b64decode(payload + padding, altchars=b'-_', validate=True).decode('utf-8')
     except (binascii.Error, UnicodeError) as exc:
         raise ValueError('invalid pairing payload') from exc
-    if raw.startswith('{'):
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError('invalid pairing payload') from exc
-        if set(data) != {'v', 'id', 'name', 'host', 'port', 'token', 'fingerprint', 'tailcat'}:
-            raise ValueError('unsupported pairing payload')
-        if data.get('v') != 3:
-            raise ValueError('unsupported pairing payload')
-        return validate_pairing(Pairing(
-            data['host'], validate_port(data['port']), data['token'], data['fingerprint'],
-            transport=TRANSPORT_AUTO, tailcat_address=data['tailcat'],
-            device_id=data['id'], device_name=data['name']))
-
     parts = raw.split('\n')
     if len(parts) == 5 and parts[0] == '1':
         return validate_pairing(Pairing(parts[1], _decode_port(parts[2]), parts[3], parts[4]))
