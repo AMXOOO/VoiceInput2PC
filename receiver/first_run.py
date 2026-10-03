@@ -90,7 +90,7 @@ class FirstRunDialog:
         ttk.Label(frame, text='连接这台电脑',
                   font=('Microsoft YaHei UI', 18, 'bold')).grid(
                       row=0, column=0, columnspan=2, sticky='w')
-        ttk.Label(frame, text='先配置本机接收端。配对时可选择局域网或跨网络安全连接。').grid(
+        ttk.Label(frame, text='先配置本机接收端。手机只配对一次，之后自动选择局域网或跨网络连接。').grid(
             row=1, column=0, columnspan=2, sticky='w', pady=(6, 18))
         ttk.Label(frame, text='电脑地址').grid(row=2, column=0, sticky='w', pady=6)
         self.host = tk.StringVar(value=addresses[0] if addresses else '')
