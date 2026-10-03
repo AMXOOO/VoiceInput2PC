@@ -1,5 +1,6 @@
 package io.github.amxooo.voiceinput2pc;
 
+import org.json.JSONObject;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -15,12 +16,26 @@ public final class PairingCodec {
     public static String encode(PairingConfig config) {
         if (config == null) throw new IllegalArgumentException("missing pairing configuration");
         final String raw;
-        if (config.isTailcat()) {
+        if (config.isAuto()) {
+            try {
+                raw = new JSONObject()
+                        .put("v", 3)
+                        .put("id", config.deviceId)
+                        .put("name", config.deviceName)
+                        .put("host", config.host)
+                        .put("port", config.port)
+                        .put("token", config.token)
+                        .put("fingerprint", config.fingerprint)
+                        .put("tailcat", config.tailcatAddress)
+                        .toString();
+            } catch (Exception impossible) {
+                throw new IllegalArgumentException("invalid pairing configuration", impossible);
+            }
+        } else if (config.isTailcat()) {
             raw = "2\n" + PairingConfig.TRANSPORT_TAILCAT + "\n"
                     + config.host + "\n" + config.port + "\n"
                     + config.token + "\n" + config.fingerprint + "\n" + config.tailcatAddress;
         } else {
-            // Keep the original v1 payload byte-for-byte compatible with v0.4.x Android clients.
             raw = "1\n" + config.host + "\n" + config.port + "\n"
                     + config.token + "\n" + config.fingerprint;
         }
@@ -53,6 +68,29 @@ public final class PairingCodec {
         } catch (CharacterCodingException error) {
             throw new IllegalArgumentException("invalid pairing payload", error);
         }
+
+        if (raw.startsWith("{")) {
+            try {
+                JSONObject value = new JSONObject(raw);
+                if (value.length() != 8 || value.getInt("v") != 3) {
+                    throw new IllegalArgumentException("unsupported pairing payload");
+                }
+                return new PairingConfig(
+                        value.getString("host"),
+                        value.getInt("port"),
+                        value.getString("token"),
+                        value.getString("fingerprint"),
+                        PairingConfig.TRANSPORT_AUTO,
+                        value.getString("tailcat"),
+                        value.getString("id"),
+                        value.getString("name"));
+            } catch (IllegalArgumentException error) {
+                throw error;
+            } catch (Exception error) {
+                throw new IllegalArgumentException("invalid pairing payload", error);
+            }
+        }
+
         String[] fields = raw.split("\n", -1);
         if (fields.length == 5 && "1".equals(fields[0])) {
             return new PairingConfig(fields[1], parsePort(fields[2]), fields[3], fields[4]);
