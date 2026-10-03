@@ -225,14 +225,26 @@ def _replace_bundle(files: dict[Path, bytes]) -> None:
 
 def load_pairing(folder: Path) -> Pairing:
     folder = Path(folder)
+    config_path = folder / 'config.json'
     try:
-        config = json.loads((folder / 'config.json').read_text(encoding='utf-8'))
+        config = json.loads(config_path.read_text(encoding='utf-8'))
+        device_id = config.get('device_id') or secrets.token_hex(16)
+        device_name = config.get('device_name') or socket.gethostname()[:80]
         value = Pairing(
             config['host'], config['port'], config['token'], config['fingerprint'],
-            device_id=config.get('device_id', ''), device_name=config.get('device_name', ''))
+            device_id=device_id, device_name=device_name)
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError('receiver configuration is incomplete') from exc
-    return validate_pairing(value)
+
+    value = validate_pairing(value)
+    if config.get('device_id') != device_id or config.get('device_name') != device_name:
+        migrated = dict(config)
+        migrated['device_id'] = device_id
+        migrated['device_name'] = device_name
+        _atomic_write(
+            config_path,
+            json.dumps(migrated, ensure_ascii=False, indent=2).encode('utf-8'))
+    return value
 
 
 def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
