@@ -30,7 +30,7 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
             super().process_request_thread(request, client_address)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = 'VoiceInput2PC/0.6.0'
+        server_version = 'VoiceInput2PC/0.4.0'
 
         def setup(self):
             super().setup()
