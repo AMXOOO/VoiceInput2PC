@@ -242,6 +242,12 @@ def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
     selected_host = validate_host(host)
     selected_port = validate_port(port)
     config_path = folder / 'config.json'
+    existing_device_id = ''
+    if config_path.exists():
+        try:
+            existing_device_id = load_pairing(folder).device_id
+        except ValueError:
+            existing_device_id = ''
     if config_path.exists() and not regenerate:
         current = load_pairing(folder)
         if not (folder / 'cert.pem').is_file() or not (folder / 'key.pem').is_file():
@@ -269,7 +275,7 @@ def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
             .sign(key, hashes.SHA256()))
     cert_pem = cert.public_bytes(serialization.Encoding.PEM)
     fingerprint = hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
-    device_id = secrets.token_hex(16)
+    device_id = existing_device_id or secrets.token_hex(16)
     value = Pairing(selected_host, selected_port, secrets.token_urlsafe(32),
                     fingerprint, device_id=device_id)
     config_data = json.dumps({
