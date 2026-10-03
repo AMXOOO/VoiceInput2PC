@@ -15,6 +15,7 @@ from receiver.pairing import (
     DEFAULT_PORT,
     Pairing,
     TRANSPORT_TAILCAT,
+    TRANSPORT_AUTO,
     detect_private_addresses,
     encode_pairing,
     prepare_receiver,
@@ -49,11 +50,12 @@ def autostart_command(executable: Path) -> str:
 
 
 def pairing_view_model(pairing: Pairing) -> PairingViewModel:
-    if pairing.transport == TRANSPORT_TAILCAT:
-        return PairingViewModel('跨网络安全连接', 'Tailcat · WireGuard 隧道 + HTTPS 二次认证',
+    if pairing.transport == TRANSPORT_AUTO:
+        return PairingViewModel('自动连接', '本地优先 · 必要时自动切换跨网络',
                                 encode_pairing(pairing))
-    return PairingViewModel(f'{pairing.host}:{pairing.port}', '局域网 HTTPS',
-                            encode_pairing(pairing))
+    if pairing.transport == TRANSPORT_TAILCAT:
+        return PairingViewModel('跨网络安全连接', '远程安全连接', encode_pairing(pairing))
+    return PairingViewModel(f'{pairing.host}:{pairing.port}', '局域网 HTTPS', encode_pairing(pairing))
 
 
 def set_autostart(enabled: bool, executable: Path) -> None:
