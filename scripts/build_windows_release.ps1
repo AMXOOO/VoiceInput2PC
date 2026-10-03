@@ -1,4 +1,4 @@
-param([string]$Version = '0.4.0')
+param([string]$Version = '0.5.0')
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -12,8 +12,8 @@ if (-not (Test-Path -LiteralPath $python)) {
 if (-not (Test-Path -LiteralPath $python)) {
     throw 'Python virtual environment was not found.'
 }
-if ($Version -ne '0.4.0') {
-    throw 'Version metadata currently supports only v0.4.0.'
+if ($Version -ne '0.5.0') {
+    throw 'Version metadata currently supports only v0.5.0.'
 }
 
 function Invoke-Checked([string]$program, [string[]]$arguments) {
@@ -51,7 +51,7 @@ try {
         throw 'Expected Windows executable was not produced.'
     }
     $versionInfo = (Get-Item -LiteralPath $exe).VersionInfo
-    if ($versionInfo.FileVersion -ne '0.4.0.0' -or $versionInfo.ProductVersion -ne '0.4.0') {
+    if ($versionInfo.FileVersion -ne '0.5.0.0' -or $versionInfo.ProductVersion -ne '0.5.0') {
         throw "Unexpected executable version metadata: $($versionInfo.FileVersion) / $($versionInfo.ProductVersion)"
     }
     $releaseRoot = (Resolve-Path (Join-Path $project 'release')).Path
