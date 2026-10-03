@@ -132,6 +132,11 @@ def decode_pairing(uri: str) -> Pairing:
     except (binascii.Error, UnicodeError) as exc:
         raise ValueError('invalid pairing payload') from exc
     parts = raw.split('\n')
+    if len(parts) == 9 and parts[0] == '3' and parts[1] == TRANSPORT_AUTO:
+        return validate_pairing(Pairing(
+            parts[4], _decode_port(parts[5]), parts[6], parts[7],
+            transport=TRANSPORT_AUTO, tailcat_address=parts[8],
+            device_id=parts[2], device_name=parts[3]))
     if len(parts) == 5 and parts[0] == '1':
         return validate_pairing(Pairing(parts[1], _decode_port(parts[2]), parts[3], parts[4]))
     if len(parts) == 7 and parts[0] == '2' and parts[1] == TRANSPORT_TAILCAT:
