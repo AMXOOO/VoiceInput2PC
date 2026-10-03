@@ -11,13 +11,14 @@ import datetime
 import sqlite3
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw
 from receiver.core import Relay, InvalidMessage
 from receiver.http_server import make_server
 from receiver.file_transfer import FileTransferManager
+from receiver.file_outbox import FileOutbox, FileOutboxError
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
 from receiver.tailcat import get_or_start, stop_all, TailcatUnavailable
@@ -149,9 +150,10 @@ def main():
         stage = '打开本机消息记录'
         relay = Relay(folder / 'messages.db', type_text, target_provider=capture_target)
         file_manager = FileTransferManager(folder)
+        file_outbox = FileOutbox(folder)
         stage = '启动监听'
         server = make_server(('0.0.0.0', current_pairing.port), relay, current_pairing.token,
-                             folder / 'cert.pem', folder / 'key.pem', file_manager=file_manager)
+                             folder / 'cert.pem', folder / 'key.pem', file_manager=file_manager, file_outbox=file_outbox)
     except Exception as exc:
         detail = startup_error_message(exc, stage, folder, port)
         try:
@@ -224,15 +226,14 @@ def main():
         status.config(text=note)
 
     def open_file_transfer():
+        path = filedialog.askopenfilename(parent=root, title='选择发送到手机的文件')
+        if not path:
+            return
         try:
-            file_manager.destination_dir.mkdir(parents=True, exist_ok=True)
-            os.startfile(str(file_manager.destination_dir))
-            status.config(text='接收文件保存在：' + str(file_manager.destination_dir))
-        except OSError as exc:
-            messagebox.showerror(
-                '语音输入电脑',
-                '暂时无法打开接收文件夹：' + str(exc),
-                parent=root)
+            queued = file_outbox.queue(Path(path))
+            status.config(text='已放入文件传输助手 · 手机打开“文件传输助手”即可接收：' + queued['name'])
+        except (OSError, FileOutboxError) as exc:
+            messagebox.showerror('文件传输助手', str(exc), parent=root)
 
     listing.bind('<<ListboxSelect>>', select)
     buttons = ttk.Frame(container)
@@ -258,7 +259,7 @@ def main():
             port = current_pairing.port
             server = make_server(('0.0.0.0', current_pairing.port), relay,
                                  current_pairing.token, folder / 'cert.pem', folder / 'key.pem',
-                                 file_manager=file_manager)
+                                 file_manager=file_manager, file_outbox=file_outbox)
             threading.Thread(target=server.serve_forever, daemon=True).start()
         except Exception as exc:
             detail = startup_error_message(exc, '更换配对码', folder, port)
