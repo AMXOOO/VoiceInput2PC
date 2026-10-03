@@ -2,7 +2,7 @@ package io.github.amxooo.voiceinput2pc;
 
 import android.content.SharedPreferences;
 
-/** Stores pairing credentials only in Android's private application preferences. */
+/** Stores paired-device credentials only in Android's private application preferences. */
 public final class PairingStore {
     private static final String HOST = "pair_host";
     private static final String PORT = "pair_port";
@@ -10,6 +10,8 @@ public final class PairingStore {
     private static final String FINGERPRINT = "pair_fingerprint";
     private static final String TRANSPORT = "pair_transport";
     private static final String TAILCAT_ADDRESS = "pair_tailcat_address";
+    private static final String DEVICE_ID = "pair_device_id";
+    private static final String DEVICE_NAME = "pair_device_name";
 
     private PairingStore() {}
 
@@ -25,7 +27,9 @@ public final class PairingStore {
                     preferences.getString(TOKEN, null),
                     preferences.getString(FINGERPRINT, null),
                     preferences.getString(TRANSPORT, PairingConfig.TRANSPORT_LAN),
-                    preferences.getString(TAILCAT_ADDRESS, ""));
+                    preferences.getString(TAILCAT_ADDRESS, ""),
+                    preferences.getString(DEVICE_ID, ""),
+                    preferences.getString(DEVICE_NAME, ""));
         } catch (ClassCastException | IllegalArgumentException invalid) {
             return null;
         }
@@ -40,6 +44,8 @@ public final class PairingStore {
                 .putString(FINGERPRINT, value.fingerprint)
                 .putString(TRANSPORT, value.transport)
                 .putString(TAILCAT_ADDRESS, value.tailcatAddress)
+                .putString(DEVICE_ID, value.deviceId)
+                .putString(DEVICE_NAME, value.deviceName)
                 .putString("host", value.host)
                 .commit();
     }
