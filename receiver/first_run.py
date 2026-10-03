@@ -89,7 +89,7 @@ class FirstRunDialog:
         ttk.Label(frame, text='连接这台电脑',
                   font=('Microsoft YaHei UI', 18, 'bold')).grid(
                       row=0, column=0, columnspan=2, sticky='w')
-        ttk.Label(frame, text='先配置本机接收端。配对时可选择局域网或跨网络安全连接。').grid(
+        ttk.Label(frame, text='先配置本机接收端。手机只需扫码一次，之后由程序自动选择本地或跨网络连接。').grid(
             row=1, column=0, columnspan=2, sticky='w', pady=(6, 18))
         ttk.Label(frame, text='电脑地址').grid(row=2, column=0, sticky='w', pady=6)
         self.host = tk.StringVar(value=addresses[0] if addresses else '')
@@ -137,17 +137,31 @@ class PairingDialog:
     def __init__(self, root, pairing: Pairing, allow_regenerate: bool,
                  on_regenerate=None):
         self.root = root
-        self.pairing = pairing
-        self.view = pairing_view_model(pairing)
         self.window = tk.Toplevel(root)
         self.window.title('语音输入电脑 · 配对手机')
         self.window.resizable(False, False)
         self.window.transient(root)
+
+        try:
+            server = get_or_start(pairing.port)
+            if not server.address:
+                raise TailcatUnavailable('没有获得跨网络地址')
+            self.pairing = Pairing(
+                pairing.host, pairing.port, pairing.token, pairing.fingerprint,
+                transport=TRANSPORT_AUTO,
+                tailcat_address=server.address,
+                device_id=pairing.device_id)
+        except (OSError, ValueError, TailcatUnavailable) as exc:
+            self.window.destroy()
+            raise RuntimeError('自动连接组件启动失败：' + str(exc)) from exc
+
+        self.view = pairing_view_model(self.pairing)
+
         frame = ttk.Frame(self.window, padding=20)
         frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text='用手机系统相机扫描',
+        ttk.Label(frame, text='扫码一次，之后自动连接',
                   font=('Microsoft YaHei UI', 17, 'bold')).pack(anchor='center')
-        ttk.Label(frame, text='扫描后选择“用语音输入电脑打开”').pack(
+        ttk.Label(frame, text='同一局域网优先直连；离开局域网后自动使用跨网络连接。').pack(
             anchor='center', pady=(5, 8))
         self.mode_label = ttk.Label(frame, text='')
         self.mode_label.pack(anchor='center', pady=(0, 8))
@@ -155,26 +169,19 @@ class PairingDialog:
         self.qr_label.pack(anchor='center')
         self.endpoint_label = ttk.Label(frame, text='')
         self.endpoint_label.pack(anchor='center', pady=(8, 3))
-        ttk.Label(frame, text='配对码包含连接凭据，请勿截图公开或发给不信任的人。').pack(
+        ttk.Label(frame, text='配对码相当于连接密码，请勿截图公开或发给不信任的人。').pack(
             anchor='center')
 
         buttons = ttk.Frame(frame)
         buttons.pack(fill='x', pady=(14, 0))
         ttk.Button(buttons, text='复制完整配对码', command=self.copy).pack(side='left')
-        self.tailcat_button = ttk.Button(
-            buttons, text='跨网络配对', command=self.enable_tailcat)
-        self.tailcat_button.pack(side='left', padx=8)
-        if find_tailcat() is None:
-            self.tailcat_button.state(['disabled'])
         if allow_regenerate and on_regenerate is not None:
             ttk.Button(buttons, text='换一组配对码', command=lambda: self.regenerate(
                 on_regenerate)).pack(side='left', padx=8)
         ttk.Button(buttons, text='完成', command=self.window.destroy).pack(side='right')
-        self.render(pairing)
+        self.render()
 
-    def render(self, pairing: Pairing):
-        self.pairing = pairing
-        self.view = pairing_view_model(pairing)
+    def render(self):
         qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M,
                            box_size=7, border=3)
         qr.add_data(self.view.uri)
@@ -184,26 +191,6 @@ class PairingDialog:
         self.qr_label.config(image=self.qr_image)
         self.mode_label.config(text=self.view.transport_label)
         self.endpoint_label.config(text='连接方式：' + self.view.endpoint)
-        if pairing.transport == TRANSPORT_TAILCAT:
-            self.tailcat_button.config(text='已启用跨网络')
-            self.tailcat_button.state(['disabled'])
-
-    def enable_tailcat(self):
-        try:
-            server = get_or_start(self.pairing.port)
-            if not server.address:
-                raise TailcatUnavailable('没有获得 Tailcat 地址')
-            tunneled = Pairing(
-                self.pairing.host, self.pairing.port,
-                self.pairing.token, self.pairing.fingerprint,
-                transport=TRANSPORT_TAILCAT,
-                tailcat_address=server.address)
-            self.render(tunneled)
-        except (OSError, ValueError, TailcatUnavailable) as exc:
-            messagebox.showerror(
-                '语音输入电脑',
-                '跨网络通道暂未建立：' + str(exc),
-                parent=self.window)
 
     def copy(self):
         self.root.clipboard_clear()
