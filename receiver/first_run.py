@@ -142,6 +142,7 @@ class PairingDialog:
         self.window.resizable(False, False)
         self.window.transient(root)
 
+        self.remote_warning = ''
         try:
             server = get_or_start(pairing.port)
             if not server.address:
@@ -152,8 +153,10 @@ class PairingDialog:
                 tailcat_address=server.address,
                 device_id=pairing.device_id)
         except (OSError, ValueError, TailcatUnavailable) as exc:
-            self.window.destroy()
-            raise RuntimeError('自动连接组件启动失败：' + str(exc)) from exc
+            # Remote transport is an enhancement, not a prerequisite for LAN.
+            # Keep local pairing available instead of blocking the whole product.
+            self.pairing = pairing
+            self.remote_warning = '跨网络连接暂不可用；本次配对仅支持当前局域网。稍后可重新打开配对窗口重试。'
 
         self.view = pairing_view_model(self.pairing)
 
@@ -169,6 +172,10 @@ class PairingDialog:
         self.qr_label.pack(anchor='center')
         self.endpoint_label = ttk.Label(frame, text='')
         self.endpoint_label.pack(anchor='center', pady=(8, 3))
+        if self.remote_warning:
+            warning = ttk.Label(frame, text=self.remote_warning, foreground='#a84623',
+                                wraplength=360, justify='center')
+            warning.pack(anchor='center', pady=(4, 4))
         ttk.Label(frame, text='配对码相当于连接密码，请勿截图公开或发给不信任的人。').pack(
             anchor='center')
 
