@@ -309,4 +309,16 @@ public final class ConnectionManager implements RelayTransport {
         // Receiver completion is idempotent and persists a completion receipt.
         return invoke((t, target) -> t.fileComplete(target, transferId), true);
     }
+
+    public JSONObject pendingFile(String host) throws Exception {
+        return invoke((t, target) -> t.pendingFile(target), true);
+    }
+
+    public JSONObject fileOutboxChunk(String host, String id, long offset) throws Exception {
+        return invoke((t, target) -> t.fileOutboxChunk(target, id, offset), true);
+    }
+
+    public JSONObject acknowledgeFile(String host, String id, String sha256) throws Exception {
+        return invoke((t, target) -> t.acknowledgeFile(target, id, sha256), true);
+    }
 }
