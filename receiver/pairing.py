@@ -269,6 +269,16 @@ def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
         _atomic_write(config_path, data)
         return updated
 
+    preserved_device_id = ''
+    preserved_device_name = ''
+    if config_path.exists():
+        try:
+            existing = load_pairing(folder)
+            preserved_device_id = existing.device_id
+            preserved_device_name = existing.device_name
+        except ValueError:
+            pass
+
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'VoiceInput2PC Receiver')])
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -285,8 +295,8 @@ def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
     value = Pairing(
         selected_host, selected_port, secrets.token_urlsafe(32),
         hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest(),
-        device_id=secrets.token_hex(16),
-        device_name=socket.gethostname()[:80])
+        device_id=preserved_device_id or secrets.token_hex(16),
+        device_name=preserved_device_name or socket.gethostname()[:80])
     config_data = json.dumps({
         'host': value.host, 'port': value.port, 'token': value.token,
         'fingerprint': value.fingerprint, 'device_id': value.device_id,
