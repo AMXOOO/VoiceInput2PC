@@ -10,6 +10,7 @@ public final class PairingStore {
     private static final String FINGERPRINT = "pair_fingerprint";
     private static final String TRANSPORT = "pair_transport";
     private static final String TAILCAT_ADDRESS = "pair_tailcat_address";
+    private static final String DEVICE_ID = "pair_device_id";
 
     private PairingStore() {}
 
@@ -25,7 +26,8 @@ public final class PairingStore {
                     preferences.getString(TOKEN, null),
                     preferences.getString(FINGERPRINT, null),
                     preferences.getString(TRANSPORT, PairingConfig.TRANSPORT_LAN),
-                    preferences.getString(TAILCAT_ADDRESS, ""));
+                    preferences.getString(TAILCAT_ADDRESS, ""),
+                    preferences.getString(DEVICE_ID, ""));
         } catch (ClassCastException | IllegalArgumentException invalid) {
             return null;
         }
@@ -40,6 +42,7 @@ public final class PairingStore {
                 .putString(FINGERPRINT, value.fingerprint)
                 .putString(TRANSPORT, value.transport)
                 .putString(TAILCAT_ADDRESS, value.tailcatAddress)
+                .putString(DEVICE_ID, value.deviceId)
                 .putString("host", value.host)
                 .commit();
     }
