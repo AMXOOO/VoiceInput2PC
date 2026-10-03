@@ -20,6 +20,7 @@ from receiver.http_server import make_server
 from receiver.file_transfer import FileTransferManager
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
+from receiver.tailcat import get_or_start, TailcatUnavailable
 from receiver.win_input import type_text, capture_target, copy_text
 
 
@@ -285,6 +286,18 @@ def main():
                       lambda exc: status.config(text='界面操作暂未成功，可在托盘重试或退出'))
 
     threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    # Keep the stable cross-network endpoint alive for already-paired phones.
+    # This is intentionally background/non-fatal: LAN input must still work if
+    # the remote transport cannot start on a restricted network.
+    def warm_remote_transport():
+        try:
+            get_or_start(current_pairing.port)
+        except (OSError, TailcatUnavailable):
+            pass
+
+    threading.Thread(target=warm_remote_transport, daemon=True,
+                     name='voiceinput2pc-remote-transport').start()
     threading.Thread(target=icon.run, daemon=True).start()
     if should_show_main_window(args.background, args.show, first_setup):
         commands.put('show')
