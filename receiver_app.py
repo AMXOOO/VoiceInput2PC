@@ -20,7 +20,7 @@ from receiver.http_server import make_server
 from receiver.file_transfer import FileTransferManager
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
-from receiver.tailcat import get_or_start, TailcatUnavailable
+from receiver.tailcat import get_or_start, stop_all, TailcatUnavailable
 from receiver.win_input import type_text, capture_target, copy_text
 
 
@@ -282,6 +282,7 @@ def main():
             refresh()
         elif command == 'exit':
             icon.stop()
+            stop_all()
             threading.Thread(target=server.shutdown, daemon=True).start()
             root.destroy()
             return False
@@ -317,6 +318,7 @@ def main():
         pass
     poll()
     root.mainloop()
+    stop_all()
     server.server_close()
     kernel.CloseHandle(mutex)
 
