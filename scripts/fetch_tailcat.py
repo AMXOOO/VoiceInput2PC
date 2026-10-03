@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fetch the pinned Tailcat release artifacts used by VoiceInput2PC v0.5.
+"""Fetch the pinned Tailcat Windows runtime used by VoiceInput2PC v0.5.
 
-Artifacts are downloaded only during development/release builds and are not
-committed to this repository. The release checksum manifest is itself pinned by
-SHA-256 before asset hashes are trusted.
+Android no longer embeds the Tailcat CLI. Android uses an in-process Go bridge
+built from the Tailcat Go library. This script only prepares the Windows
+runtime and also deletes any stale Android CLI artifact left by older builds.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import io
 from pathlib import Path
-import tarfile
 import urllib.request
 import zipfile
 
@@ -20,12 +19,13 @@ VERSION = "0.7.0"
 BASE = f"https://github.com/tailscale/tailcat/releases/download/v{VERSION}"
 CHECKSUMS_NAME = "checksums.txt"
 CHECKSUMS_SHA256 = "26055cb931338d77ff1731c129daf653c02ef6d68febef39cdbc1bcb610176a1"
-LINUX_ARM64 = f"tailcat_{VERSION}_linux_arm64.tar.gz"
 WINDOWS_AMD64 = f"tailcat_{VERSION}_windows_amd64.zip"
 
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_DEST = ROOT / "vendor" / "tailcat" / "windows" / "tailcat.exe"
-ANDROID_DEST = ROOT / "android" / "app" / "src" / "main" / "jniLibs" / "arm64-v8a" / "libtailcat.so"
+LEGACY_ANDROID_DEST = (
+    ROOT / "android" / "app" / "src" / "main" / "jniLibs" / "arm64-v8a" / "libtailcat.so"
+)
 
 
 def sha256(data: bytes) -> str:
@@ -66,37 +66,25 @@ def verified_asset(name: str, hashes: dict[str, str]) -> bytes:
 
 def extract_windows(data: bytes) -> bytes:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        candidates = [name for name in archive.namelist()
-                      if Path(name).name.lower() == "tailcat.exe"]
+        candidates = [
+            name for name in archive.namelist()
+            if Path(name).name.lower() == "tailcat.exe"
+        ]
         if len(candidates) != 1:
             raise RuntimeError("Unexpected Tailcat Windows archive layout")
         return archive.read(candidates[0])
 
 
-def extract_linux(data: bytes) -> bytes:
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        members = [member for member in archive.getmembers()
-                   if member.isfile() and Path(member.name).name == "tailcat"]
-        if len(members) != 1:
-            raise RuntimeError("Unexpected Tailcat Linux archive layout")
-        stream = archive.extractfile(members[0])
-        if stream is None:
-            raise RuntimeError("Tailcat Linux binary could not be read")
-        return stream.read()
-
-
-def write(path: Path, data: bytes):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-
-
 def main():
     hashes = expected_hashes()
     windows = extract_windows(verified_asset(WINDOWS_AMD64, hashes))
-    android = extract_linux(verified_asset(LINUX_ARM64, hashes))
-    write(WINDOWS_DEST, windows)
-    write(ANDROID_DEST, android)
-    print(f"Tailcat v{VERSION} prepared for Windows amd64 and Android arm64.")
+    WINDOWS_DEST.parent.mkdir(parents=True, exist_ok=True)
+    WINDOWS_DEST.write_bytes(windows)
+
+    if LEGACY_ANDROID_DEST.exists():
+        LEGACY_ANDROID_DEST.unlink()
+
+    print(f"Tailcat v{VERSION} prepared for Windows amd64; legacy Android CLI removed.")
 
 
 if __name__ == "__main__":
