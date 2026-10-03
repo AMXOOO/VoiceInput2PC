@@ -27,7 +27,10 @@ def main():
 
     previous = os.environ.get("VOICEINPUT2PC_TAILCAT")
     os.environ["VOICEINPUT2PC_TAILCAT"] = str(binary)
-    server = TailcatServer(args.port)
+    key_path = Path(os.environ.get(
+        "VOICEINPUT2PC_TEST_TAILCAT_KEY",
+        str(binary.parent / "voiceinput2pc-tailcat-test.private.json")))
+    server = TailcatServer(args.port, key_path)
     try:
         address = server.start(timeout=20)
         if not address.startswith("tc"):
