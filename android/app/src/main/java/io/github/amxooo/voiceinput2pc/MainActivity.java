@@ -225,7 +225,9 @@ public class MainActivity extends Activity {
         });
         TextView title = label("语音输入电脑",28,Color.rgb(31,48,43));
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); layout.addView(title,row(-2));
-        destination = label("电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
+        destination = label(pairing.isAuto()
+                ? "这台电脑 · 自动连接 · 更换 ›"
+                : "电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
         destination.setPadding(0,dp(6),0,dp(10));
         destination.setOnClickListener(v -> {
             if (busy || tracker.pending() != null) {
