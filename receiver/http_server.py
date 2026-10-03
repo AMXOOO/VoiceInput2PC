@@ -82,6 +82,7 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                 length = int(self.headers.get('Content-Length', '0'))
 
                 if self.path == '/file/chunk':
+                    self.connection.settimeout(30)
                     if file_manager is None:
                         self.reply(404, {'ok': False})
                         return
