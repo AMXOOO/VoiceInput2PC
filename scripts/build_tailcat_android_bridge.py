@@ -34,6 +34,7 @@ def main():
 
         env = os.environ.copy()
         env["GOBIN"] = str(bin_dir)
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
         run([go, "install", f"golang.org/x/mobile/cmd/gomobile@{XMOBILE}"], env=env)
         run([go, "install", f"golang.org/x/mobile/cmd/gobind@{XMOBILE}"], env=env)
         gomobile = bin_dir / ("gomobile.exe" if os.name == "nt" else "gomobile")
