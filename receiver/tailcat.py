@@ -1,8 +1,8 @@
 """Internal Tailcat runtime for VoiceInput2PC cross-network pairing.
 
-Tailcat is an implementation detail. VoiceInput2PC always launches it with an
-ephemeral identity so the app never depends on, reads, or mutates a user's
-standalone Tailcat configuration.
+Tailcat is an implementation detail. VoiceInput2PC keeps its own private saved
+server key so the device address remains stable across receiver restarts without
+depending on or mutating a user's standalone Tailcat configuration.
 """
 
 from __future__ import annotations
@@ -73,10 +73,9 @@ class TailcatServer:
             raise TailcatUnavailable('当前接收端未包含跨网络组件')
 
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        # --key=new is important: the embedded runtime must never consume a user's
-        # standalone Tailcat default key/config. --json makes address output stable.
+        key_path = self._ensure_private_key(binary, flags)
         self.process = subprocess.Popen(
-            [str(binary), '--key=new', '--json', 'serve', str(self.port)],
+            [str(binary), '--key=' + str(key_path), '--json', 'serve', str(self.port)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
@@ -109,6 +108,34 @@ class TailcatServer:
         detail = self._diagnostic_summary()
         raise TailcatUnavailable(
             '跨网络连接建立超时' + (f'：{detail}' if detail else ''))
+
+    def _key_path(self) -> Path:
+        root = Path(os.environ.get('LOCALAPPDATA') or (Path.home() / 'AppData' / 'Local'))
+        folder = root / 'VoiceInput2PC'
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / 'tailcat-server.private.json'
+
+    def _ensure_private_key(self, binary: Path, flags: int) -> Path:
+        path = self._key_path()
+        if path.is_file():
+            return path
+        process = subprocess.run(
+            [str(binary), 'genkey', '--key=' + str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            creationflags=flags,
+            timeout=20,
+        )
+        if process.returncode != 0 or not path.is_file():
+            detail = _safe_diagnostic(process.stdout or '')
+            raise TailcatUnavailable(
+                '无法创建本机跨网络身份'
+                + (f'：{detail}' if detail else f'（退出码 {process.returncode}）'))
+        return path
 
     def _drain(self):
         stream = self.process.stdout if self.process is not None else None
