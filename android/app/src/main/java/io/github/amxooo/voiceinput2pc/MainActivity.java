@@ -140,7 +140,7 @@ public class MainActivity extends Activity {
         say("正在核对电脑身份和连接凭据…", false);
         worker.execute(() -> {
             try {
-                RelayTransport candidateClient = new RelayClient(this, candidate);
+                RelayTransport candidateClient = createTransport(candidate);
                 JSONObject result = candidateClient.request(candidate.host, null);
                 if (!Boolean.TRUE.equals(result.opt("ok"))
                         || !"VoiceInput2PC".equals(result.optString("app"))
@@ -173,6 +173,10 @@ public class MainActivity extends Activity {
         });
     }
 
+    private RelayTransport createTransport(PairingConfig pairing) throws Exception {
+        return pairing.isAuto() ? new ConnectionManager(this, pairing) : new RelayClient(this, pairing);
+    }
+
     private String pairingFailureText(Exception failure) {
         String message = failure == null ? "" : failure.getMessage();
         if (message == null || message.trim().isEmpty()) {
@@ -189,7 +193,7 @@ public class MainActivity extends Activity {
         setTitle("语音输入电脑");
         try {
             host = prefs.getString("host", pairing.host);
-            client = new RelayClient(this, pairing);
+            client = createTransport(pairing);
         } catch (Exception invalid) {
             showPairingScreen("保存的连接配置无法使用，请重新配对。");
             return;
