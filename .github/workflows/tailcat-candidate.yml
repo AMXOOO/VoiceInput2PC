@@ -6,6 +6,7 @@ on:
       - main
       - feat/tailcat-transport-v0.5
       - feat/file-transfer-v0.6
+      - feat/unified-connection-v0.6
   pull_request:
     branches:
       - main
