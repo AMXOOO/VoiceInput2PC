@@ -18,14 +18,23 @@ public final class RelayClient implements RelayTransport {
     private final int port;
     private final SSLContext context;
     private final String forcedHost;
+    private final int connectTimeoutMs;
+    private final int readTimeoutMs;
 
     public RelayClient(PairingConfig pairing) throws Exception {
-        this(null, pairing);
+        this(null, pairing, 10000, 20000);
     }
 
     public RelayClient(Context androidContext, PairingConfig pairing) throws Exception {
+        this(androidContext, pairing, 10000, 20000);
+    }
+
+    public RelayClient(Context androidContext, PairingConfig pairing,
+                       int connectTimeoutMs, int readTimeoutMs) throws Exception {
         if (pairing == null) throw new IllegalArgumentException("连接配置缺失");
         token = pairing.token;
+        this.connectTimeoutMs = connectTimeoutMs;
+        this.readTimeoutMs = readTimeoutMs;
         if (pairing.isTailcat()) {
             TailcatForwarder forwarder = TailcatForwarder.getOrStart(
                     androidContext, pairing.tailcatAddress, pairing.port);
@@ -80,6 +89,20 @@ public final class RelayClient implements RelayTransport {
 
     public JSONObject fileComplete(String host, String transferId) throws Exception {
         return request(host, "/file/complete", new JSONObject().put("id", transferId));
+    }
+
+    public JSONObject pendingFile(String host) throws Exception {
+        return request(host, "/file-outbox", null);
+    }
+
+    public JSONObject fileOutboxChunk(String host, String id, long offset) throws Exception {
+        return request(host, "/file-outbox/chunk",
+                new JSONObject().put("id", id).put("offset", offset));
+    }
+
+    public JSONObject acknowledgeFile(String host, String id, String sha256) throws Exception {
+        return request(host, "/file-outbox/ack",
+                new JSONObject().put("id", id).put("sha256", sha256));
     }
 
     public JSONObject fileChunk(String host, String transferId, long offset,
@@ -137,8 +160,8 @@ public final class RelayClient implements RelayTransport {
         // Server identity is pinned to the certificate fingerprint, not the tunnel hostname.
         conn.setHostnameVerifier((name, session) -> true);
         conn.setInstanceFollowRedirects(false);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(20000);
+        conn.setConnectTimeout(connectTimeoutMs);
+        conn.setReadTimeout(readTimeoutMs);
         conn.setRequestProperty("Authorization", "Bearer " + token);
         conn.setRequestProperty("Connection", "close");
     }

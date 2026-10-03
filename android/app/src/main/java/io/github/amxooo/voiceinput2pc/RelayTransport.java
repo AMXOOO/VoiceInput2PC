@@ -13,4 +13,7 @@ public interface RelayTransport {
     JSONObject fileChunk(String host, String transferId, long offset,
                          byte[] data, int length) throws Exception;
     JSONObject fileComplete(String host, String transferId) throws Exception;
+    JSONObject pendingFile(String host) throws Exception;
+    JSONObject fileOutboxChunk(String host, String id, long offset) throws Exception;
+    JSONObject acknowledgeFile(String host, String id, String sha256) throws Exception;
 }

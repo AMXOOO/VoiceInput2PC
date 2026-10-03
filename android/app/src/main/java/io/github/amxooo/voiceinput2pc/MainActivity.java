@@ -42,6 +42,8 @@ public class MainActivity extends Activity {
     private final int green = Color.rgb(22,112,91);
     private final Runnable flush = this::transmitCommitted;
     private static final int PICK_FILE_REQUEST = 2606;
+    private static final int SAVE_FILE_REQUEST = 2607;
+    private JSONObject pendingDownload;
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private TextView label(String text, int size, int color) {
@@ -140,7 +142,7 @@ public class MainActivity extends Activity {
         say("正在核对电脑身份和连接凭据…", false);
         worker.execute(() -> {
             try {
-                RelayTransport candidateClient = new RelayClient(this, candidate);
+                RelayTransport candidateClient = createTransport(candidate);
                 JSONObject result = candidateClient.request(candidate.host, null);
                 if (!Boolean.TRUE.equals(result.opt("ok"))
                         || !"VoiceInput2PC".equals(result.optString("app"))
@@ -158,9 +160,10 @@ public class MainActivity extends Activity {
                     showTypingScreen(candidate);
                     fileTransferSupported = hasFeature(result, "file-upload-v1");
                     updateControls();
+                    String routeNote = routeNote(candidateClient);
                     say(result.optBoolean("paused")
-                            ? "已连接 · 请先在电脑启用输入，再选中输入框"
-                            : "已连接 · 先选中电脑输入框，再点开始", false);
+                            ? "已连接" + routeNote + " · 请先在电脑启用输入，再选中输入框"
+                            : "已连接" + routeNote + " · 先选中电脑输入框，再点开始", false);
                 });
             } catch (Exception failure) {
                 final String detail = pairingFailureText(failure);
@@ -171,6 +174,18 @@ public class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private RelayTransport createTransport(PairingConfig pairing) throws Exception {
+        return pairing.isAuto() ? new ConnectionManager(this, pairing) : new RelayClient(this, pairing);
+    }
+
+    private String routeNote(RelayTransport transport) {
+        if (!(transport instanceof ConnectionManager)) return "";
+        String mode = ((ConnectionManager) transport).activeMode();
+        if ("lan".equals(mode)) return " · 本地直连";
+        if ("tailcat".equals(mode)) return " · 远程连接";
+        return "";
     }
 
     private String pairingFailureText(Exception failure) {
@@ -189,7 +204,7 @@ public class MainActivity extends Activity {
         setTitle("语音输入电脑");
         try {
             host = prefs.getString("host", pairing.host);
-            client = new RelayClient(this, pairing);
+            client = createTransport(pairing);
         } catch (Exception invalid) {
             showPairingScreen("保存的连接配置无法使用，请重新配对。");
             return;
@@ -221,7 +236,9 @@ public class MainActivity extends Activity {
         });
         TextView title = label("语音输入电脑",28,Color.rgb(31,48,43));
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); layout.addView(title,row(-2));
-        destination = label("电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
+        destination = label(pairing.isAuto()
+                ? "这台电脑 · 自动连接 · 更换 ›"
+                : "电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
         destination.setPadding(0,dp(6),0,dp(10));
         destination.setOnClickListener(v -> {
             if (busy || tracker.pending() != null) {
@@ -261,17 +278,17 @@ public class MainActivity extends Activity {
         startParams.leftMargin=dp(8); actions.addView(start,startParams);
         LinearLayout.LayoutParams receiveParams = new LinearLayout.LayoutParams(0,dp(58),1);
         receiveParams.leftMargin=dp(8); actions.addView(receive,receiveParams); layout.addView(actions,row(-2));
-        sendFile = new Button(this); sendFile.setText("发送文件到电脑");
+        sendFile = new Button(this); sendFile.setText("文件传输助手");
         LinearLayout.LayoutParams fileParams = row(52); fileParams.topMargin = dp(8);
         layout.addView(sendFile, fileParams);
-        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。文件发送支持单文件 ≤ 200MB，保存到电脑 Downloads/VoiceInput2PC。",12,Color.GRAY);
+        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。文件传输助手支持手机与电脑双向传文件，单文件 ≤ 200MB。",12,Color.GRAY);
         hint.setPadding(0,dp(8),0,dp(2)); layout.addView(hint,row(-2));
         setContentView(layout);
         loading=true; editor.setText(draft); editor.setSelection(editor.length()); loading=false;
         editor.setEditObserver(this::edited);
         start.setOnClickListener(v -> toggleStart()); fresh.setOnClickListener(v -> newDraft());
         receive.setOnClickListener(v -> receiveFromComputer());
-        sendFile.setOnClickListener(v -> chooseFile());
+        sendFile.setOnClickListener(v -> openFileTransferAssistant());
         updateControls();
         if (pending != null) uncertainHint();
         else if (tracker.isSaved()) say("电脑只保存了文字，未自动输入。点“保留并重置”核对后恢复。",true);
@@ -279,6 +296,75 @@ public class MainActivity extends Activity {
         else if (!draft.isEmpty()) say("草稿已恢复，当前暂停。点开始前请核对电脑已有文字。",false);
         else health();
         probeCapabilities();
+    }
+
+    private void openFileTransferAssistant() {
+        if (busy || destroyed || !resumed || !fileTransferSupported) return;
+        final String address = host;
+        worker.execute(() -> {
+            try {
+                JSONObject result = client.pendingFile(address);
+                JSONObject file = result.optJSONObject("file");
+                handler.post(() -> {
+                    if (destroyed) return;
+                    if (file != null) {
+                        pendingDownload = file;
+                        new AlertDialog.Builder(this).setTitle("文件传输助手")
+                            .setMessage("电脑发来：" + file.optString("name", "文件") + "\n大小：" + humanBytes(file.optLong("size", 0)))
+                            .setNegativeButton("稍后接收", null)
+                            .setNeutralButton("发送文件到电脑", (d,w) -> chooseFile())
+                            .setPositiveButton("接收到手机", (d,w) -> chooseDownloadDestination(file)).show();
+                    } else {
+                        new AlertDialog.Builder(this).setTitle("文件传输助手")
+                            .setMessage("电脑目前没有待接收文件。")
+                            .setNegativeButton("关闭", null)
+                            .setPositiveButton("发送文件到电脑", (d,w) -> chooseFile()).show();
+                    }
+                });
+            } catch (Exception e) { handler.post(() -> say("文件传输助手连接失败", true)); }
+        });
+    }
+
+    private String humanBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(java.util.Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        return String.format(java.util.Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+
+    private void chooseDownloadDestination(JSONObject file) {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(file.optString("mime", "application/octet-stream"));
+        intent.putExtra(Intent.EXTRA_TITLE, file.optString("name", "VoiceInput2PC-file"));
+        startActivityForResult(intent, SAVE_FILE_REQUEST);
+    }
+
+    private void downloadPendingFile(Uri destinationUri) {
+        final JSONObject file = pendingDownload;
+        if (file == null) return;
+        final String id = file.optString("id", ""), expectedSha = file.optString("sha256", "");
+        final long total = file.optLong("size", -1); final String address = host;
+        busy=true; updateControls(); say("正在接收文件…", false);
+        worker.execute(() -> {
+            try {
+                java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+                long offset=0;
+                try (java.io.OutputStream out=getContentResolver().openOutputStream(destinationUri, "w")) {
+                    if (out==null) throw new Exception("无法打开手机保存位置");
+                    while(offset<total) {
+                        JSONObject chunk=client.fileOutboxChunk(address,id,offset);
+                        byte[] data=android.util.Base64.decode(chunk.optString("data",""),android.util.Base64.DEFAULT);
+                        if(!chunk.optBoolean("ok") || chunk.optLong("offset",-1)!=offset || data.length==0) throw new Exception("文件分块无效");
+                        out.write(data); digest.update(data); offset+=data.length;
+                        final long done=offset; handler.post(() -> say("正在接收文件 " + (done*100/Math.max(1,total)) + "%",false));
+                    }
+                }
+                String actual=AndroidFileTransfer.hexForDownload(digest.digest());
+                if(!expectedSha.equals(actual)) throw new Exception("文件完整性校验失败");
+                client.acknowledgeFile(address,id,actual); pendingDownload=null;
+                handler.post(() -> {busy=false; updateControls(); say("文件已保存到手机",false);});
+            } catch(Exception e) {handler.post(() -> {busy=false; updateControls(); say("接收文件失败 · "+e.getMessage(),true);});}
+        });
     }
 
     private void probeCapabilities() {
@@ -595,9 +681,13 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_FILE_REQUEST || resultCode != RESULT_OK
-                || data == null || data.getData() == null) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
+        if (requestCode == SAVE_FILE_REQUEST) {
+            downloadPendingFile(uri);
+            return;
+        }
+        if (requestCode != PICK_FILE_REQUEST) return;
         try {
             int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
             getContentResolver().takePersistableUriPermission(uri, flags);
@@ -716,7 +806,8 @@ public class MainActivity extends Activity {
                     } else {
                         fileTransferSupported = hasFeature(result, "file-upload-v1");
                         updateControls();
-                        say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                        String routeNote = routeNote(client);
+                        say(result.optBoolean("paused") ? "已连接" + routeNote + " · 请先在电脑启用输入，再选中输入框" : "已连接" + routeNote + " · 先选中电脑输入框，再点开始",false);
                     }
                 });
             } catch(Exception e) {

@@ -11,15 +11,17 @@ import datetime
 import sqlite3
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw
 from receiver.core import Relay, InvalidMessage
 from receiver.http_server import make_server
 from receiver.file_transfer import FileTransferManager
+from receiver.file_outbox import FileOutbox, FileOutboxError
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
+from receiver.tailcat import get_or_start, stop_all, TailcatUnavailable
 from receiver.win_input import type_text, capture_target, copy_text
 
 
@@ -148,9 +150,10 @@ def main():
         stage = '打开本机消息记录'
         relay = Relay(folder / 'messages.db', type_text, target_provider=capture_target)
         file_manager = FileTransferManager(folder)
+        file_outbox = FileOutbox(folder)
         stage = '启动监听'
         server = make_server(('0.0.0.0', current_pairing.port), relay, current_pairing.token,
-                             folder / 'cert.pem', folder / 'key.pem', file_manager=file_manager)
+                             folder / 'cert.pem', folder / 'key.pem', file_manager=file_manager, file_outbox=file_outbox)
     except Exception as exc:
         detail = startup_error_message(exc, stage, folder, port)
         try:
@@ -222,13 +225,24 @@ def main():
         _, note = queue_clipboard_for_phone(relay, root.clipboard_get)
         status.config(text=note)
 
+    def open_file_transfer():
+        path = filedialog.askopenfilename(parent=root, title='选择发送到手机的文件')
+        if not path:
+            return
+        try:
+            queued = file_outbox.queue(Path(path))
+            status.config(text='已放入文件传输助手 · 手机打开“文件传输助手”即可接收：' + queued['name'])
+        except (OSError, FileOutboxError) as exc:
+            messagebox.showerror('文件传输助手', str(exc), parent=root)
+
     listing.bind('<<ListboxSelect>>', select)
     buttons = ttk.Frame(container)
     buttons.pack(fill='x')
     ttk.Button(buttons, text='复制选中文字', command=copy_selected).pack(side='left')
     ttk.Button(buttons, text='发送剪贴板到手机', command=send_clipboard_to_phone).pack(side='left', padx=(8, 0))
     ttk.Button(buttons, text='刷新', command=refresh).pack(side='left', padx=8)
-    ttk.Button(buttons, text='配对手机', command=lambda: open_pairing()).pack(side='left')
+    ttk.Button(buttons, text='文件传输助手', command=open_file_transfer).pack(side='left')
+    ttk.Button(buttons, text='配对手机', command=lambda: open_pairing()).pack(side='left', padx=(8, 0))
     ttk.Button(buttons, text='收起到托盘', command=root.withdraw).pack(side='right')
 
     def regenerate_pairing():
@@ -245,7 +259,7 @@ def main():
             port = current_pairing.port
             server = make_server(('0.0.0.0', current_pairing.port), relay,
                                  current_pairing.token, folder / 'cert.pem', folder / 'key.pem',
-                                 file_manager=file_manager)
+                                 file_manager=file_manager, file_outbox=file_outbox)
             threading.Thread(target=server.serve_forever, daemon=True).start()
         except Exception as exc:
             detail = startup_error_message(exc, '更换配对码', folder, port)
@@ -256,12 +270,18 @@ def main():
             relay.paused = previous_pause
             icon.update_menu()
         refresh()
-        show_pairing(root, current_pairing, allow_regenerate=True,
-                     on_regenerate=regenerate_pairing)
+        open_pairing()
 
     def open_pairing():
-        show_pairing(root, current_pairing, allow_regenerate=True,
-                     on_regenerate=regenerate_pairing)
+        try:
+            show_pairing(root, current_pairing, allow_regenerate=True,
+                         on_regenerate=regenerate_pairing)
+        except RuntimeError as exc:
+            messagebox.showerror(
+                '语音输入电脑',
+                '暂时无法生成自动配对码：' + str(exc)
+                + '\n\n电脑接收端仍在运行，局域网输入不受影响。',
+                parent=root)
 
     def handle_command(command):
         if command == 'show':
@@ -275,6 +295,7 @@ def main():
             refresh()
         elif command == 'exit':
             icon.stop()
+            stop_all()
             threading.Thread(target=server.shutdown, daemon=True).start()
             root.destroy()
             return False
@@ -285,13 +306,23 @@ def main():
                       lambda exc: status.config(text='界面操作暂未成功，可在托盘重试或退出'))
 
     threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    # Keep the stable cross-network endpoint alive for already-paired phones.
+    # This is intentionally background/non-fatal: LAN input must still work if
+    # the remote transport cannot start on a restricted network.
+    def warm_remote_transport():
+        try:
+            get_or_start(current_pairing.port)
+        except (OSError, TailcatUnavailable):
+            pass
+
+    threading.Thread(target=warm_remote_transport, daemon=True,
+                     name='voiceinput2pc-remote-transport').start()
     threading.Thread(target=icon.run, daemon=True).start()
     if should_show_main_window(args.background, args.show, first_setup):
         commands.put('show')
     if first_setup:
-        root.after(250, lambda: show_pairing(
-            root, current_pairing, allow_regenerate=True,
-            on_regenerate=regenerate_pairing))
+        root.after(250, open_pairing)
     try:
         Path(args.diagnostic_report).write_text(json.dumps({
             'time': datetime.datetime.now().isoformat(), 'ok': True,
@@ -300,6 +331,7 @@ def main():
         pass
     poll()
     root.mainloop()
+    stop_all()
     server.server_close()
     kernel.CloseHandle(mutex)
 

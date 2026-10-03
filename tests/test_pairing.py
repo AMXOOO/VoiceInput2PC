@@ -4,6 +4,7 @@ import unittest
 from receiver.pairing import (
     Pairing,
     TRANSPORT_TAILCAT,
+    TRANSPORT_AUTO,
     decode_pairing,
     encode_pairing,
 )
@@ -40,6 +41,35 @@ class PairingTests(unittest.TestCase):
         ).decode()
         self.assertTrue(raw.startswith('2\ntailcat\n'))
         self.assertTrue(raw.endswith(address))
+
+    def test_unified_pairing_v3_round_trips(self):
+        address = 'tc' + ('B' * 64)
+        value = Pairing(
+            '192.168.1.20', 23337, 'C' * 43, 'ef' * 32,
+            transport=TRANSPORT_AUTO,
+            tailcat_address=address,
+            device_id='1234567890abcdef1234567890abcdef',
+        )
+        uri = encode_pairing(value)
+        decoded = decode_pairing(uri)
+        self.assertEqual(value, decoded)
+        raw = base64.urlsafe_b64decode(
+            uri.split('p=', 1)[1] + '=' * (-len(uri.split('p=', 1)[1]) % 4)
+        ).decode()
+        self.assertTrue(raw.startswith('3\n1234567890abcdef1234567890abcdef\n'))
+        self.assertTrue(raw.endswith(address))
+        self.assertNotIn(address, repr(value))
+
+
+    def test_unified_pairing_rejects_missing_identity(self):
+        address = 'tc' + ('D' * 64)
+        with self.assertRaises(ValueError):
+            encode_pairing(Pairing(
+                '192.168.1.20', 23337, 'E' * 43, '12' * 32,
+                transport=TRANSPORT_AUTO,
+                tailcat_address=address,
+                device_id='',
+            ))
 
     def test_invalid_pairing_is_rejected(self):
         valid = Pairing('pc.lan', 23337, 'aB_-' * 10, '12' * 32)

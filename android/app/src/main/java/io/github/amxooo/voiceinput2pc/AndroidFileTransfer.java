@@ -153,6 +153,8 @@ final class AndroidFileTransfer {
         return total;
     }
 
+    static String hexForDownload(byte[] bytes) { return hex(bytes); }
+
     private static String hex(byte[] bytes) {
         StringBuilder value = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) value.append(String.format(Locale.ROOT, "%02x", b & 255));

@@ -88,7 +88,16 @@ class FileTransferManager:
         transfer_id = _transfer_id(name, size, digest)
         meta_path = self._meta_path(transfer_id)
         part_path = self._part_path(transfer_id)
+        done_path = self._done_path(transfer_id)
         expected = {"id": transfer_id, "name": name, "size": size, "sha256": digest, "mime": mime}
+
+        if done_path.exists():
+            done = self._load_done(transfer_id)
+            if done.get("sha256") == digest and done.get("size") == size:
+                return {
+                    "ok": True, "id": transfer_id, "offset": size,
+                    "size": size, "status": "complete",
+                }
 
         if meta_path.exists():
             try:
@@ -147,6 +156,16 @@ class FileTransferManager:
 
     def complete(self, transfer_id: str) -> dict:
         with self._lock_for(transfer_id):
+            done_path = self._done_path(transfer_id)
+            if done_path.exists():
+                done = self._load_done(transfer_id)
+                return {
+                    "ok": True,
+                    "status": "complete",
+                    "name": done["name"],
+                    "size": done["size"],
+                }
+
             meta = self._load(transfer_id)
             part = self._part_path(transfer_id)
             if not part.exists():
@@ -165,6 +184,13 @@ class FileTransferManager:
             self.destination_dir.mkdir(parents=True, exist_ok=True)
             target = self._unique_target(meta["name"])
             os.replace(part, target)
+            receipt = {
+                "id": transfer_id,
+                "name": target.name,
+                "size": meta["size"],
+                "sha256": meta["sha256"],
+            }
+            self._atomic_json(done_path, receipt)
             try:
                 self._meta_path(transfer_id).unlink()
             except FileNotFoundError:
@@ -193,6 +219,20 @@ class FileTransferManager:
 
     def _meta_path(self, transfer_id: str) -> Path:
         return self.spool / f"{transfer_id}.json"
+
+    def _done_path(self, transfer_id: str) -> Path:
+        return self.spool / f"{transfer_id}.done.json"
+
+    def _load_done(self, transfer_id: str) -> dict:
+        if not isinstance(transfer_id, str) or not _ID.fullmatch(transfer_id):
+            raise FileTransferError("传输编号无效")
+        try:
+            value = json.loads(self._done_path(transfer_id).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise FileTransferError("完成记录损坏") from exc
+        if not isinstance(value, dict) or value.get("id") != transfer_id:
+            raise FileTransferError("完成记录损坏")
+        return value
 
     def _part_path(self, transfer_id: str) -> Path:
         return self.spool / f"{transfer_id}.part"

@@ -1,8 +1,6 @@
 """Internal Tailcat runtime for VoiceInput2PC cross-network pairing.
 
-Tailcat is an implementation detail. VoiceInput2PC always launches it with an
-ephemeral identity so the app never depends on, reads, or mutates a user's
-standalone Tailcat configuration.
+Tailcat is an implementation detail. Reliability takes precedence over a stable\nremote address: each receiver process uses a fresh isolated Tailcat identity,\nmatching the previously proven transport behavior.
 """
 
 from __future__ import annotations
@@ -73,8 +71,6 @@ class TailcatServer:
             raise TailcatUnavailable('当前接收端未包含跨网络组件')
 
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        # --key=new is important: the embedded runtime must never consume a user's
-        # standalone Tailcat default key/config. --json makes address output stable.
         self.process = subprocess.Popen(
             [str(binary), '--key=new', '--json', 'serve', str(self.port)],
             stdout=subprocess.PIPE,

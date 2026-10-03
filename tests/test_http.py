@@ -2,6 +2,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from http.client import HTTPConnection
 from pathlib import Path
 from receiver.core import Relay
@@ -33,6 +34,34 @@ class ProtocolTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             worker.join()
+
+
+    def test_health_returns_current_lan_hosts_only_after_auth(self):
+        with tempfile.TemporaryDirectory() as folder:
+            relay = Relay(Path(folder) / 'db', lambda text: None)
+            with mock.patch('receiver.http_server.detect_private_addresses',
+                            return_value=['192.168.1.44', '10.0.0.8']):
+                server = make_server(('127.0.0.1', 0), relay, 'test-secret')
+                worker = threading.Thread(target=server.serve_forever, daemon=True)
+                worker.start()
+                try:
+                    def get(token):
+                        conn = HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+                        conn.request('GET', '/health',
+                                     headers={'Authorization': 'Bearer ' + token})
+                        response = conn.getresponse()
+                        body = json.loads(response.read())
+                        conn.close()
+                        return response.status, body
+
+                    self.assertEqual(401, get('wrong')[0])
+                    status, body = get('test-secret')
+                    self.assertEqual(200, status)
+                    self.assertEqual(['192.168.1.44', '10.0.0.8'], body['lan_hosts'])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    worker.join()
 
     def test_phone_outbox_requires_auth_and_acknowledges_exact_item(self):
         with tempfile.TemporaryDirectory() as folder:

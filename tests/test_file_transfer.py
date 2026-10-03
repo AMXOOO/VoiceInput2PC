@@ -54,6 +54,33 @@ class FileTransferManagerTests(unittest.TestCase):
             self.assertEqual(payload, saved.read_bytes())
             self.assertFalse((manager.spool / f"{transfer_id}.part").exists())
 
+
+    def test_complete_is_idempotent_after_response_loss(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            destination = root / "downloads"
+            manager = FileTransferManager(root / "state", destination)
+            payload = b"idempotent-complete"
+            metadata = {
+                "name": "once.txt",
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "mime": "text/plain",
+            }
+            started = manager.begin(metadata)
+            manager.append(started["id"], 0, payload)
+
+            first = manager.complete(started["id"])
+            second = manager.complete(started["id"])
+
+            self.assertEqual(first, second)
+            self.assertEqual(payload, (destination / first["name"]).read_bytes())
+            self.assertEqual(1, len(list(destination.iterdir())))
+
+            resumed = manager.begin(metadata)
+            self.assertEqual(len(payload), resumed["offset"])
+            self.assertEqual("complete", resumed["status"])
+
     def test_rejects_bad_names_size_and_hash(self):
         with tempfile.TemporaryDirectory() as root:
             manager = FileTransferManager(Path(root) / "state", Path(root) / "dest")
