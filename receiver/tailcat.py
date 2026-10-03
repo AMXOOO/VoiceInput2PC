@@ -152,17 +152,25 @@ class TailcatServer:
         process = self.process
         self.process = None
         self.address = None
-        if process is None or process.poll() is not None:
+        if process is None:
             return
-        process.terminate()
-        try:
-            process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        if process.poll() is None:
+            process.terminate()
             try:
-                process.wait(timeout=2)
+                process.wait(timeout=3)
             except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+        if process.stdout is not None:
+            try:
+                process.stdout.close()
+            except OSError:
                 pass
+        if self._reader is not None and self._reader.is_alive():
+            self._reader.join(timeout=0.5)
 
 
 _ACTIVE: dict[tuple[int, str], TailcatServer] = {}
