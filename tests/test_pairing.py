@@ -3,6 +3,7 @@ import unittest
 
 from receiver.pairing import (
     Pairing,
+    TRANSPORT_AUTO,
     TRANSPORT_TAILCAT,
     decode_pairing,
     encode_pairing,
@@ -40,6 +41,32 @@ class PairingTests(unittest.TestCase):
         ).decode()
         self.assertTrue(raw.startswith('2\ntailcat\n'))
         self.assertTrue(raw.endswith(address))
+
+    def test_unified_v3_pairing_round_trip(self):
+        address = 'tc' + ('Z' * 64)
+        value = Pairing(
+            '192.168.1.20', 23337, 'C' * 43, 'ef' * 32,
+            transport=TRANSPORT_AUTO,
+            tailcat_address=address,
+            device_id='0123456789abcdef0123456789abcdef',
+            device_name='Office PC',
+        )
+
+        uri = encode_pairing(value)
+        decoded = decode_pairing(uri)
+
+        self.assertEqual(value, decoded)
+        self.assertTrue(uri.startswith('voiceinput2pc://pair?p='))
+        raw = base64.urlsafe_b64decode(
+            uri.split('p=', 1)[1] + '=' * (-len(uri.split('p=', 1)[1]) % 4)
+        ).decode()
+        payload = __import__('json').loads(raw)
+        self.assertEqual(3, payload['v'])
+        self.assertEqual('Office PC', payload['name'])
+        self.assertEqual(address, payload['tailcat'])
+        self.assertNotIn(value.token, repr(value))
+        self.assertNotIn(value.fingerprint, repr(value))
+        self.assertNotIn(address, repr(value))
 
     def test_invalid_pairing_is_rejected(self):
         valid = Pairing('pc.lan', 23337, 'aB_-' * 10, '12' * 32)
