@@ -9,10 +9,13 @@ import org.json.JSONObject;
  * through the alternate route after a transport failure.
  */
 public final class ConnectionManager implements RelayTransport {
+    private static final long LAN_REPROBE_MS = 20000L;
+
     private final Context context;
     private final PairingConfig pairing;
     private RelayTransport active;
     private String activeMode = "none";
+    private long lastLanProbeAt;
 
     interface Operation {
         JSONObject run(RelayTransport transport) throws Exception;
@@ -75,6 +78,7 @@ public final class ConnectionManager implements RelayTransport {
     }
 
     private JSONObject invoke(Operation op, boolean safeRetry) throws Exception {
+        maybePreferLanAgain();
         RelayTransport first = resolve();
         try {
             return op.run(first);
@@ -97,6 +101,28 @@ public final class ConnectionManager implements RelayTransport {
         }
     }
 
+    private void maybePreferLanAgain() {
+        synchronized (this) {
+            if (!"tailcat".equals(activeMode)) return;
+            long now = System.currentTimeMillis();
+            if (now - lastLanProbeAt < LAN_REPROBE_MS) return;
+            lastLanProbeAt = now;
+        }
+
+        try {
+            RelayTransport candidate = lan();
+            JSONObject health = candidate.request(pairing.host, null);
+            if (validHealth(health)) {
+                synchronized (this) {
+                    active = candidate;
+                    activeMode = "lan";
+                }
+            }
+        } catch (Exception ignored) {
+            // Still away from the LAN. Keep the working Tailcat route.
+        }
+    }
+
     private synchronized RelayTransport resolveAlternate(String failedMode) throws Exception {
         Exception last = null;
         if (!"tailcat".equals(failedMode)) {
@@ -106,6 +132,7 @@ public final class ConnectionManager implements RelayTransport {
                 if (validHealth(health)) {
                     active = candidate;
                     activeMode = "tailcat";
+                    lastLanProbeAt = System.currentTimeMillis();
                     return active;
                 }
             } catch (Exception failure) { last = failure; }
@@ -157,8 +184,8 @@ public final class ConnectionManager implements RelayTransport {
         return invoke(t -> t.fileChunk(pairing.host, transferId, offset, data, length), true);
     }
     public JSONObject fileComplete(String host, String transferId) throws Exception {
-        // A complete request moves the durable .part file. If its response is lost,
-        // don't blindly repeat it through another route.
-        return invoke(t -> t.fileComplete(pairing.host, transferId), false);
+        // Receiver completion is idempotent and persists a completion receipt,
+        // so a lost response can safely fail over to the alternate route.
+        return invoke(t -> t.fileComplete(pairing.host, transferId), true);
     }
 }
