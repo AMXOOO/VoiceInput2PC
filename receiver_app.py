@@ -257,12 +257,18 @@ def main():
             relay.paused = previous_pause
             icon.update_menu()
         refresh()
-        show_pairing(root, current_pairing, allow_regenerate=True,
-                     on_regenerate=regenerate_pairing)
+        open_pairing()
 
     def open_pairing():
-        show_pairing(root, current_pairing, allow_regenerate=True,
-                     on_regenerate=regenerate_pairing)
+        try:
+            show_pairing(root, current_pairing, allow_regenerate=True,
+                         on_regenerate=regenerate_pairing)
+        except RuntimeError as exc:
+            messagebox.showerror(
+                '语音输入电脑',
+                '暂时无法生成自动配对码：' + str(exc)
+                + '\n\n电脑接收端仍在运行，局域网输入不受影响。',
+                parent=root)
 
     def handle_command(command):
         if command == 'show':
@@ -302,9 +308,7 @@ def main():
     if should_show_main_window(args.background, args.show, first_setup):
         commands.put('show')
     if first_setup:
-        root.after(250, lambda: show_pairing(
-            root, current_pairing, allow_regenerate=True,
-            on_regenerate=regenerate_pairing))
+        root.after(250, open_pairing)
     try:
         Path(args.diagnostic_report).write_text(json.dumps({
             'time': datetime.datetime.now().isoformat(), 'ok': True,
