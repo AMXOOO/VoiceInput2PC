@@ -223,13 +223,25 @@ def main():
         _, note = queue_clipboard_for_phone(relay, root.clipboard_get)
         status.config(text=note)
 
+    def open_received_files():
+        try:
+            file_manager.destination_dir.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(file_manager.destination_dir))
+            status.config(text='接收文件保存在：' + str(file_manager.destination_dir))
+        except OSError as exc:
+            messagebox.showerror(
+                '语音输入电脑',
+                '暂时无法打开接收文件夹：' + str(exc),
+                parent=root)
+
     listing.bind('<<ListboxSelect>>', select)
     buttons = ttk.Frame(container)
     buttons.pack(fill='x')
     ttk.Button(buttons, text='复制选中文字', command=copy_selected).pack(side='left')
     ttk.Button(buttons, text='发送剪贴板到手机', command=send_clipboard_to_phone).pack(side='left', padx=(8, 0))
     ttk.Button(buttons, text='刷新', command=refresh).pack(side='left', padx=8)
-    ttk.Button(buttons, text='配对手机', command=lambda: open_pairing()).pack(side='left')
+    ttk.Button(buttons, text='接收文件', command=open_received_files).pack(side='left')
+    ttk.Button(buttons, text='配对手机', command=lambda: open_pairing()).pack(side='left', padx=(8, 0))
     ttk.Button(buttons, text='收起到托盘', command=root.withdraw).pack(side='right')
 
     def regenerate_pairing():
