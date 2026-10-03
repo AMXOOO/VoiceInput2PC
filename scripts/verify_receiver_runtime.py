@@ -139,21 +139,22 @@ def main():
             print('PASS: background startup stayed hidden, HTTPS was healthy, and manual launch revealed the window.')
         finally:
             if process.poll() is None:
-                process.terminate()
+                # The receiver owns an embedded Tailcat child process. Kill the
+                # whole test process tree while the parent PID still exists;
+                # terminating only the parent would orphan tailcat.exe and keep
+                # the extracted package directory locked.
+                subprocess.run(
+                    ['taskkill.exe', '/PID', str(process.pid), '/T', '/F'],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                )
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        subprocess.run(
-                            ['taskkill.exe', '/PID', str(process.pid), '/T', '/F'],
-                            check=False,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            timeout=10,
-                        )
+                    process.wait(timeout=5)
 
 
 if __name__ == '__main__':
