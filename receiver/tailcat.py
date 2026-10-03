@@ -166,24 +166,28 @@ class TailcatServer:
 
 
 _ACTIVE: dict[tuple[int, str], TailcatServer] = {}
+_ACTIVE_LOCK = threading.Lock()
 
 
 def get_or_start(port: int, key_path: Path) -> TailcatServer:
     key = (int(port), str(Path(key_path).resolve()))
-    existing = _ACTIVE.get(key)
-    if existing is not None and existing.process is not None and existing.process.poll() is None:
-        if existing.address is None:
-            existing.start()
-        return existing
-    server = TailcatServer(port, Path(key_path))
-    server.start()
-    _ACTIVE[key] = server
-    return server
+    with _ACTIVE_LOCK:
+        existing = _ACTIVE.get(key)
+        if existing is not None and existing.process is not None and existing.process.poll() is None:
+            if existing.address is None:
+                existing.start()
+            return existing
+        server = TailcatServer(port, Path(key_path))
+        server.start()
+        _ACTIVE[key] = server
+        return server
 
 
 def stop_all():
-    while _ACTIVE:
-        _, server = _ACTIVE.popitem()
+    with _ACTIVE_LOCK:
+        servers = list(_ACTIVE.values())
+        _ACTIVE.clear()
+    for server in servers:
         server.stop()
 
 
