@@ -7,39 +7,56 @@ import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
- * Starts the bundled tailcat static binary as a localhost-only forwarding sidecar.
- * The VoiceInput2PC application protocol still runs over HTTPS with its own token
- * and certificate fingerprint; tailcat only provides the encrypted cross-network tunnel.
+ * Starts the bundled Tailcat runtime as a localhost-only forwarding sidecar.
+ * VoiceInput2PC always uses an ephemeral Tailcat client identity so it does not
+ * depend on or mutate any standalone Tailcat configuration on the device.
  */
 final class TailcatForwarder {
     private static final Map<String, TailcatForwarder> ACTIVE = new ConcurrentHashMap<>();
+    private static final Pattern ADDRESS = Pattern.compile("tc[A-Za-z0-9_-]{20,4094}");
 
     private final Process process;
     private final int localPort;
+    private final Deque<String> diagnostics = new ArrayDeque<>();
 
     private TailcatForwarder(Context context, String tailcatAddress, int remotePort) throws Exception {
         if (context == null) throw new IllegalArgumentException("Android context is required for Tailcat");
         File binary = new File(context.getApplicationInfo().nativeLibraryDir, "libtailcat.so");
-        if (!binary.isFile()) throw new Exception("Tailcat 组件未包含在当前安装包中");
+        if (!binary.isFile()) {
+            throw new Exception("阶段1/4：手机安装包里没有跨网络组件");
+        }
+        if (!binary.canExecute()) {
+            // nativeLibraryDir should normally be executable; make this explicit for diagnostics.
+            binary.setExecutable(true, true);
+        }
 
         localPort = choosePort();
         ProcessBuilder builder = new ProcessBuilder(
                 binary.getAbsolutePath(),
+                "--key=new",
                 "forward",
                 tailcatAddress,
                 localPort + ":" + remotePort);
         builder.redirectErrorStream(true);
-        process = builder.start();
+
+        try {
+            process = builder.start();
+        } catch (Exception startFailure) {
+            throw new Exception("阶段1/4：手机无法启动跨网络组件：" + safe(startFailure.getMessage()), startFailure);
+        }
+
         Thread drain = new Thread(() -> {
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
-                while (reader.readLine() != null) {
-                    // Do not log output: the tailcat address is connection-sensitive.
-                }
+                String line;
+                while ((line = reader.readLine()) != null) remember(line);
             } catch (Exception ignored) {
             }
         }, "voiceinput2pc-tailcat-log-drain");
@@ -76,21 +93,54 @@ final class TailcatForwarder {
     }
 
     private void waitForListener() throws Exception {
-        long deadline = System.currentTimeMillis() + 7000;
+        long deadline = System.currentTimeMillis() + 12000;
         Exception last = null;
         while (System.currentTimeMillis() < deadline) {
-            if (!isAlive()) throw new Exception("Tailcat 通道启动失败");
+            if (!isAlive()) {
+                int code = process.exitValue();
+                throw new Exception("阶段1/4：跨网络组件已退出（代码 " + code + diagnosticSuffix() + "）");
+            }
             try (Socket socket = new Socket()) {
                 socket.connect(new java.net.InetSocketAddress(
-                        InetAddress.getLoopbackAddress(), localPort), 200);
+                        InetAddress.getLoopbackAddress(), localPort), 250);
                 return;
             } catch (Exception failure) {
                 last = failure;
-                Thread.sleep(80);
+                Thread.sleep(100);
             }
         }
         process.destroy();
-        throw new Exception("Tailcat 本地通道启动超时", last);
+        throw new Exception("阶段2/4：手机本地转发端口没有建立" + diagnosticSuffix(), last);
+    }
+
+    private void remember(String raw) {
+        String value = safe(raw);
+        if (value.isEmpty()) return;
+        synchronized (diagnostics) {
+            diagnostics.addLast(value);
+            while (diagnostics.size() > 4) diagnostics.removeFirst();
+        }
+    }
+
+    private String diagnosticSuffix() {
+        synchronized (diagnostics) {
+            if (diagnostics.isEmpty()) return "";
+            StringBuilder out = new StringBuilder("：");
+            boolean first = true;
+            for (String line : diagnostics) {
+                if (!first) out.append(" | ");
+                first = false;
+                out.append(line);
+            }
+            return out.toString();
+        }
+    }
+
+    private static String safe(String raw) {
+        if (raw == null) return "";
+        String value = ADDRESS.matcher(raw.trim()).replaceAll("tc<redacted>");
+        if (value.length() > 300) value = value.substring(0, 300);
+        return value;
     }
 
     private static int choosePort() throws Exception {
