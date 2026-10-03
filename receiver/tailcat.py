@@ -53,8 +53,9 @@ def _safe_diagnostic(line: str) -> str:
 
 
 class TailcatServer:
-    def __init__(self, port: int):
+    def __init__(self, port: int, key_path: Path):
         self.port = int(port)
+        self.key_path = Path(key_path)
         self.process: subprocess.Popen[str] | None = None
         self.address: str | None = None
         self._lines: queue.Queue[str] = queue.Queue()
@@ -73,10 +74,9 @@ class TailcatServer:
             raise TailcatUnavailable('当前接收端未包含跨网络组件')
 
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        # --key=new is important: the embedded runtime must never consume a user's
-        # standalone Tailcat default key/config. --json makes address output stable.
+        self._ensure_key(binary, flags)
         self.process = subprocess.Popen(
-            [str(binary), '--key=new', '--json', 'serve', str(self.port)],
+            [str(binary), '--key=' + str(self.key_path), '--json', 'serve', str(self.port)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
@@ -109,6 +109,26 @@ class TailcatServer:
         detail = self._diagnostic_summary()
         raise TailcatUnavailable(
             '跨网络连接建立超时' + (f'：{detail}' if detail else ''))
+
+    def _ensure_key(self, binary: Path, flags: int):
+        if self.key_path.is_file():
+            return
+        self.key_path.parent.mkdir(parents=True, exist_ok=True)
+        completed = subprocess.run(
+            [str(binary), 'genkey', '--key=' + str(self.key_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            creationflags=flags,
+            timeout=30,
+        )
+        if completed.returncode != 0 or not self.key_path.is_file():
+            detail = _safe_diagnostic(completed.stderr)
+            raise TailcatUnavailable(
+                '跨网络身份初始化失败' + (f'：{detail}' if detail else ''))
 
     def _drain(self):
         stream = self.process.stdout if self.process is not None else None
@@ -145,18 +165,19 @@ class TailcatServer:
                 pass
 
 
-_ACTIVE: dict[int, TailcatServer] = {}
+_ACTIVE: dict[tuple[int, str], TailcatServer] = {}
 
 
-def get_or_start(port: int) -> TailcatServer:
-    existing = _ACTIVE.get(int(port))
+def get_or_start(port: int, key_path: Path) -> TailcatServer:
+    key = (int(port), str(Path(key_path).resolve()))
+    existing = _ACTIVE.get(key)
     if existing is not None and existing.process is not None and existing.process.poll() is None:
         if existing.address is None:
             existing.start()
         return existing
-    server = TailcatServer(port)
+    server = TailcatServer(port, Path(key_path))
     server.start()
-    _ACTIVE[int(port)] = server
+    _ACTIVE[key] = server
     return server
 
 
