@@ -78,7 +78,12 @@ public final class RelayClient implements RelayTransport {
         String target = forcedHost == null ? host : forcedHost;
         if (!target.matches("[A-Za-z0-9.-]+")) throw new Exception("电脑地址格式不正确");
         URL url = new URL("https://" + target + ":" + port + path);
-        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+        final HttpsURLConnection conn;
+        try {
+            conn = (HttpsURLConnection) url.openConnection();
+        } catch (Exception openFailure) {
+            throw new Exception("阶段3/4：无法打开电脑连接：" + safeMessage(openFailure), openFailure);
+        }
         conn.setSSLSocketFactory(context.getSocketFactory());
         // Server identity is pinned to the bundled certificate fingerprint, not the tunnel hostname.
         conn.setHostnameVerifier((name, session) -> true);
@@ -96,12 +101,32 @@ public final class RelayClient implements RelayTransport {
                 conn.setFixedLengthStreamingMode(data.length);
                 try (java.io.OutputStream stream = conn.getOutputStream()) { stream.write(data); }
             }
-            int code = conn.getResponseCode();
-            if (code != 200) throw new Exception(code == 401 ? "电脑连接凭据不匹配" : "电脑未接受消息（" + code + "）");
+            final int code;
+            try {
+                code = conn.getResponseCode();
+            } catch (javax.net.ssl.SSLHandshakeException tlsFailure) {
+                throw new Exception("阶段3/4：电脑证书验证失败：" + safeMessage(tlsFailure), tlsFailure);
+            } catch (java.net.ConnectException connectFailure) {
+                throw new Exception("阶段2/4：跨网络隧道没有连到电脑：" + safeMessage(connectFailure), connectFailure);
+            } catch (java.net.SocketTimeoutException timeout) {
+                throw new Exception("阶段2/4：连接电脑超时：" + safeMessage(timeout), timeout);
+            }
+            if (code != 200) {
+                throw new Exception(code == 401
+                        ? "阶段4/4：电脑连接凭据不匹配"
+                        : "阶段4/4：电脑未接受消息（" + code + "）");
+            }
             try (InputStream stream = conn.getInputStream()) {
                 return new JSONObject(read(stream));
             }
         } finally { conn.disconnect(); }
+    }
+
+    private static String safeMessage(Throwable error) {
+        String message = error == null ? "" : error.getMessage();
+        if (message == null || message.trim().isEmpty()) return error == null ? "未知错误" : error.getClass().getSimpleName();
+        message = message.replaceAll("tc[A-Za-z0-9_-]{20,4094}", "tc<redacted>");
+        return message.length() > 220 ? message.substring(0, 220) : message;
     }
 
     public static String read(InputStream stream) throws Exception {
