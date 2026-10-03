@@ -33,6 +33,7 @@ jobs:
         working-directory: mobile/tailcatbridge
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
+          go get -tool golang.org/x/mobile/cmd/gobind@latest
           gomobile init
           mkdir -p ../../android/app/libs
           gomobile bind -target=android/arm64 -androidapi=26 -javapkg=io.github.amxooo.voiceinput2pc -o ../../android/app/libs/tailcatbridge.aar .
