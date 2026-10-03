@@ -15,7 +15,11 @@ public final class PairingCodec {
     public static String encode(PairingConfig config) {
         if (config == null) throw new IllegalArgumentException("missing pairing configuration");
         final String raw;
-        if (config.isTailcat()) {
+        if (config.isAuto()) {
+            raw = "3\n" + config.deviceId + "\n"
+                    + config.host + "\n" + config.port + "\n"
+                    + config.token + "\n" + config.fingerprint + "\n" + config.tailcatAddress;
+        } else if (config.isTailcat()) {
             raw = "2\n" + PairingConfig.TRANSPORT_TAILCAT + "\n"
                     + config.host + "\n" + config.port + "\n"
                     + config.token + "\n" + config.fingerprint + "\n" + config.tailcatAddress;
@@ -61,6 +65,10 @@ public final class PairingCodec {
                 && PairingConfig.TRANSPORT_TAILCAT.equals(fields[1])) {
             return new PairingConfig(fields[2], parsePort(fields[3]), fields[4], fields[5],
                     PairingConfig.TRANSPORT_TAILCAT, fields[6]);
+        }
+        if (fields.length == 7 && "3".equals(fields[0])) {
+            return new PairingConfig(fields[2], parsePort(fields[3]), fields[4], fields[5],
+                    PairingConfig.TRANSPORT_AUTO, fields[6], fields[1]);
         }
         throw new IllegalArgumentException("unsupported pairing payload");
     }
