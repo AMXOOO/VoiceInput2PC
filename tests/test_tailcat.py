@@ -31,7 +31,7 @@ class TailcatServerTests(unittest.TestCase):
                         '{{"private":"fake"}}', encoding="utf-8")
                     raise SystemExit(0)
 
-                print("# Server listening with saved key \"voiceinput2pc\": tc" + "A" * 64, flush=True)
+                print("# Server listening with saved key voiceinput2pc: tc" + "A" * 64, flush=True)
                 time.sleep(30)
             """), encoding="utf-8")
             fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
