@@ -37,6 +37,120 @@ class FirstRunTests(unittest.TestCase):
 
             self.assertEqual(first.token, second.token)
             self.assertEqual(first.fingerprint, second.fingerprint)
+            self.assertEqual(first.device_id, second.device_id)
+            self.assertRegex(second.device_id, r'^[0-9a-f]{32}
+            self.assertEqual(24444, second.port)
+            self.assertEqual(second, load_pairing(target))
+            for name in ('config.json', 'cert.pem', 'key.pem'):
+                self.assertTrue((target / name).is_file(), name)
+            self.assertNotIn(first.token, output.getvalue())
+            self.assertNotIn(first.fingerprint, output.getvalue())
+
+    def test_failed_regeneration_preserves_existing_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / 'receiver'
+            original = prepare_receiver(target, '192.168.1.20', 23337)
+            snapshots = {name: (target / name).read_bytes()
+                         for name in ('config.json', 'cert.pem', 'key.pem')}
+
+            with mock.patch('receiver.pairing.rsa.generate_private_key',
+                            side_effect=RuntimeError('generation failed')):
+                with self.assertRaisesRegex(RuntimeError, 'generation failed'):
+                    prepare_receiver(target, '192.168.1.20', 23337, regenerate=True)
+
+            self.assertEqual(original, load_pairing(target))
+            self.assertEqual(snapshots, {name: (target / name).read_bytes()
+                                         for name in snapshots})
+
+    def test_detect_private_addresses_filters_and_deduplicates(self):
+        candidates = ('127.0.0.1', '169.254.1.2', '8.8.8.8', '100.69.95.78',
+                      '192.168.1.20', '192.168.1.20', '10.0.0.8', 'bad')
+
+        self.assertEqual(
+            ['192.168.1.20', '10.0.0.8', '100.69.95.78'],
+            detect_private_addresses(candidates))
+
+
+    def test_load_legacy_config_derives_stable_device_id(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)
+            fingerprint = 'ab' * 32
+            (target / 'config.json').write_text(json.dumps({
+                'host': '192.168.1.20',
+                'port': 23337,
+                'token': 'A' * 43,
+                'fingerprint': fingerprint,
+            }), encoding='utf-8')
+            loaded = load_pairing(target)
+            self.assertRegex(loaded.device_id, r'^[0-9a-f]{32}
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)
+            (target / 'config.json').write_text(json.dumps({'host': 'pc.lan'}), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                load_pairing(target)
+
+
+if __name__ == '__main__':
+    unittest.main()
+)
+            self.assertEqual('192.168.1.21', second.host)
+            self.assertEqual(24444, second.port)
+            self.assertEqual(second, load_pairing(target))
+            for name in ('config.json', 'cert.pem', 'key.pem'):
+                self.assertTrue((target / name).is_file(), name)
+            self.assertNotIn(first.token, output.getvalue())
+            self.assertNotIn(first.fingerprint, output.getvalue())
+
+    def test_failed_regeneration_preserves_existing_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / 'receiver'
+            original = prepare_receiver(target, '192.168.1.20', 23337)
+            snapshots = {name: (target / name).read_bytes()
+                         for name in ('config.json', 'cert.pem', 'key.pem')}
+
+            with mock.patch('receiver.pairing.rsa.generate_private_key',
+                            side_effect=RuntimeError('generation failed')):
+                with self.assertRaisesRegex(RuntimeError, 'generation failed'):
+                    prepare_receiver(target, '192.168.1.20', 23337, regenerate=True)
+
+            self.assertEqual(original, load_pairing(target))
+            self.assertEqual(snapshots, {name: (target / name).read_bytes()
+                                         for name in snapshots})
+
+    def test_detect_private_addresses_filters_and_deduplicates(self):
+        candidates = ('127.0.0.1', '169.254.1.2', '8.8.8.8', '100.69.95.78',
+                      '192.168.1.20', '192.168.1.20', '10.0.0.8', 'bad')
+
+        self.assertEqual(
+            ['192.168.1.20', '10.0.0.8', '100.69.95.78'],
+            detect_private_addresses(candidates))
+
+    def test_load_pairing_rejects_incomplete_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)
+            (target / 'config.json').write_text(json.dumps({'host': 'pc.lan'}), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                load_pairing(target)
+
+
+if __name__ == '__main__':
+    unittest.main()
+)
+
+            loaded_again = load_pairing(target)
+            self.assertEqual(loaded.device_id, loaded_again.device_id)
+
+    def test_load_pairing_rejects_incomplete_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)
+            (target / 'config.json').write_text(json.dumps({'host': 'pc.lan'}), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                load_pairing(target)
+
+
+if __name__ == '__main__':
+    unittest.main()
+)
             self.assertEqual('192.168.1.21', second.host)
             self.assertEqual(24444, second.port)
             self.assertEqual(second, load_pairing(target))
