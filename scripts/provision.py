@@ -39,6 +39,8 @@ def provision(host, port, config_dir, asset_path=None):
             'port': pairing.port,
             'token': pairing.token,
             'fingerprint': pairing.fingerprint,
+            'device_id': pairing.device_id,
+            'device_name': pairing.device_name,
         }, ensure_ascii=False, indent=2), encoding='utf-8')
     print('Local pairing prepared; credentials were not printed.')
 
