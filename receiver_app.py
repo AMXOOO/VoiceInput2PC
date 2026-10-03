@@ -256,11 +256,11 @@ def main():
             relay.paused = previous_pause
             icon.update_menu()
         refresh()
-        show_pairing(root, current_pairing, allow_regenerate=True,
+        show_pairing(root, current_pairing, folder, allow_regenerate=True,
                      on_regenerate=regenerate_pairing)
 
     def open_pairing():
-        show_pairing(root, current_pairing, allow_regenerate=True,
+        show_pairing(root, current_pairing, folder, allow_regenerate=True,
                      on_regenerate=regenerate_pairing)
 
     def handle_command(command):
@@ -290,7 +290,7 @@ def main():
         commands.put('show')
     if first_setup:
         root.after(250, lambda: show_pairing(
-            root, current_pairing, allow_regenerate=True,
+            root, current_pairing, folder, allow_regenerate=True,
             on_regenerate=regenerate_pairing))
     try:
         Path(args.diagnostic_report).write_text(json.dumps({
