@@ -1,6 +1,5 @@
 package io.github.amxooo.voiceinput2pc;
 
-import org.json.JSONObject;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -17,20 +16,11 @@ public final class PairingCodec {
         if (config == null) throw new IllegalArgumentException("missing pairing configuration");
         final String raw;
         if (config.isAuto()) {
-            try {
-                raw = new JSONObject()
-                        .put("v", 3)
-                        .put("id", config.deviceId)
-                        .put("name", config.deviceName)
-                        .put("host", config.host)
-                        .put("port", config.port)
-                        .put("token", config.token)
-                        .put("fingerprint", config.fingerprint)
-                        .put("tailcat", config.tailcatAddress)
-                        .toString();
-            } catch (Exception impossible) {
-                throw new IllegalArgumentException("invalid pairing configuration", impossible);
-            }
+            raw = "3\n" + PairingConfig.TRANSPORT_AUTO + "\n"
+                    + config.deviceId + "\n" + config.deviceName + "\n"
+                    + config.host + "\n" + config.port + "\n"
+                    + config.token + "\n" + config.fingerprint + "\n"
+                    + config.tailcatAddress;
         } else if (config.isTailcat()) {
             raw = "2\n" + PairingConfig.TRANSPORT_TAILCAT + "\n"
                     + config.host + "\n" + config.port + "\n"
