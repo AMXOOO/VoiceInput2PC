@@ -62,6 +62,19 @@ public final class PairingCodecTest {
         check(!tailcat.toString().contains(tailcatAddress));
         check(tailcat.isTailcat());
 
+        PairingConfig unified = new PairingConfig(
+                "192.168.1.20", 23337, token, fingerprint,
+                PairingConfig.TRANSPORT_AUTO, tailcatAddress,
+                "0123456789abcdef0123456789abcdef", "Office PC");
+        String unifiedUri = PairingCodec.encode(unified);
+        check(PairingCodec.decode(unifiedUri).equals(unified));
+        check(unified.isAuto());
+        check(unified.lanOnly().transport.equals(PairingConfig.TRANSPORT_LAN));
+        check(unified.tailcatOnly().transport.equals(PairingConfig.TRANSPORT_TAILCAT));
+        check(!unified.toString().contains(tailcatAddress));
+        check(!unified.toString().contains(token));
+        check(!unified.toString().contains(fingerprint));
+
         invalidUri("");
         invalidUri("https://example.com");
         invalidUri(payload("2\npc.lan\n23337\n" + token + "\n" + fingerprint));
