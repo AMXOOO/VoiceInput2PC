@@ -115,7 +115,7 @@ class TailcatServer:
             return
         self.key_path.parent.mkdir(parents=True, exist_ok=True)
         completed = subprocess.run(
-            [str(binary), 'genkey', '--key=' + str(self.key_path)],
+            [str(binary), 'genkey', '--fixed-region', '--key=' + str(self.key_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
