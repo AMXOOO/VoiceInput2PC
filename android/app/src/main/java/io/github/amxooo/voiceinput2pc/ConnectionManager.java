@@ -6,32 +6,41 @@ import org.json.JSONObject;
 /**
  * One logical connection to one paired computer.
  *
- * LAN is probed first because it is faster and cheaper. If it fails, the same
- * request is retried through Tailcat. Once a path succeeds it is preferred
- * until it fails, at which point the manager fails over to the other path.
+ * LAN is probed first because it is faster and cheaper. Tailcat is created
+ * lazily only when LAN is unavailable or the current LAN path fails.
  */
 public final class ConnectionManager implements RelayTransport {
     private static final String ROUTE_LAN = "lan";
     private static final String ROUTE_TAILCAT = "tailcat";
 
+    private final Context context;
+    private final PairingConfig pairing;
     private final String host;
     private final RelayTransport lan;
-    private final RelayTransport tailcat;
+    private RelayTransport tailcat;
     private volatile RelayTransport active;
     private volatile String activeRoute = "";
 
     public ConnectionManager(Context context, PairingConfig pairing) throws Exception {
-        if (pairing == null || !pairing.isAuto()) {
+        if (context == null || pairing == null || !pairing.isAuto()) {
             throw new IllegalArgumentException("自动连接需要统一配对信息");
         }
+        this.context = context.getApplicationContext();
+        this.pairing = pairing;
         host = pairing.host;
         // LAN failure should be discovered quickly; remote startup may legitimately take longer.
-        lan = new RelayClient(context, pairing.lanOnly(), 900, 2500);
-        tailcat = new RelayClient(context, pairing.tailcatOnly(), 10000, 20000);
+        lan = new RelayClient(this.context, pairing.lanOnly(), 900, 2500);
     }
 
     public String activeRoute() {
         return activeRoute;
+    }
+
+    private synchronized RelayTransport tailcat() throws Exception {
+        if (tailcat == null) {
+            tailcat = new RelayClient(context, pairing.tailcatOnly(), 10000, 20000);
+        }
+        return tailcat;
     }
 
     private interface Call {
@@ -51,9 +60,10 @@ public final class ConnectionManager implements RelayTransport {
         } catch (Exception ignored) {
         }
 
-        JSONObject health = tailcat.request(host, null);
+        RelayTransport remote = tailcat();
+        JSONObject health = remote.request(host, null);
         if (!validHealth(health)) throw new Exception("电脑接收端响应无效");
-        active = tailcat;
+        active = remote;
         activeRoute = ROUTE_TAILCAT;
         return active;
     }
@@ -65,7 +75,7 @@ public final class ConnectionManager implements RelayTransport {
         } catch (Exception first) {
             RelayTransport alternate;
             synchronized (this) {
-                alternate = selected == lan ? tailcat : lan;
+                alternate = selected == lan ? tailcat() : lan;
                 active = null;
                 activeRoute = "";
             }
