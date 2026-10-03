@@ -20,6 +20,8 @@ public final class ConnectionManager implements RelayTransport {
     private RelayTransport tailcat;
     private volatile RelayTransport active;
     private volatile String activeRoute = "";
+    private long lastLanProbeAt;
+    private static final long LAN_REPROBE_MS = 30_000L;
 
     public ConnectionManager(Context context, PairingConfig pairing) throws Exception {
         if (context == null || pairing == null || !pairing.isAuto()) {
@@ -48,8 +50,22 @@ public final class ConnectionManager implements RelayTransport {
     }
 
     private synchronized RelayTransport choose() throws Exception {
-        if (active != null) return active;
+        if (active != null) {
+            if (active == tailcat && System.currentTimeMillis() - lastLanProbeAt >= LAN_REPROBE_MS) {
+                lastLanProbeAt = System.currentTimeMillis();
+                try {
+                    JSONObject health = lan.request(host, null);
+                    if (validHealth(health)) {
+                        active = lan;
+                        activeRoute = ROUTE_LAN;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            return active;
+        }
 
+        lastLanProbeAt = System.currentTimeMillis();
         try {
             JSONObject health = lan.request(host, null);
             if (validHealth(health)) {
