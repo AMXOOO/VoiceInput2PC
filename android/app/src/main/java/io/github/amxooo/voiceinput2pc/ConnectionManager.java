@@ -139,15 +139,24 @@ public final class ConnectionManager implements RelayTransport {
                 }
             }
 
-            Route second = resolveAlternate(first.mode);
+            final Route second;
+            try {
+                second = resolveAlternate(first.mode);
+            } catch (Exception alternateFailure) {
+                alternateFailure.addSuppressed(firstFailure);
+                throw new Exception("本地与远程连接都不可用；当前路线失败："
+                        + safe(firstFailure) + "；备用路线失败：" + safe(alternateFailure),
+                        alternateFailure);
+            }
             try {
                 JSONObject result = op.run(second.transport, second.host);
                 absorbLanHosts(result);
                 return result;
             } catch (Exception secondFailure) {
                 secondFailure.addSuppressed(firstFailure);
-                throw new Exception("连接已自动切换但请求仍失败：" + safe(secondFailure),
-                        secondFailure);
+                throw new Exception("已切换到" + ("lan".equals(second.mode) ? "本地连接" : "远程连接")
+                        + "，但请求仍失败：" + safe(secondFailure)
+                        + "；原路线：" + safe(firstFailure), secondFailure);
             }
         }
     }
