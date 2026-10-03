@@ -1,5 +1,9 @@
 name: Tailcat transport candidate
 
+concurrency:
+  group: tailcat-transport-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
   push:
