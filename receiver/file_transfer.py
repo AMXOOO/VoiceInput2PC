@@ -8,12 +8,19 @@ import os
 from pathlib import Path, PurePath
 import re
 import tempfile
+import threading
 
 
 MAX_FILE_BYTES = 200 * 1024 * 1024
 MAX_CHUNK_BYTES = 1024 * 1024
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ID = re.compile(r"^[0-9a-f]{32}$")
+_WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *{f"COM{i}" for i in range(1, 10)},
+    *{f"LPT{i}" for i in range(1, 10)},
+}
+_WINDOWS_BAD = set('<>:"/\\|?*')
 
 
 class FileTransferError(ValueError):
@@ -30,6 +37,11 @@ def _safe_filename(raw: str) -> str:
         raise FileTransferError("文件名无效")
     if name in (".", "..") or any(ord(ch) < 32 for ch in name):
         raise FileTransferError("文件名无效")
+    if name.endswith((" ", ".")) or any(ch in _WINDOWS_BAD for ch in name):
+        raise FileTransferError("文件名不适用于 Windows")
+    stem = name.split(".", 1)[0].upper()
+    if stem in _WINDOWS_RESERVED:
+        raise FileTransferError("文件名不适用于 Windows")
     return name
 
 
@@ -56,6 +68,8 @@ class FileTransferManager:
             else Path.home() / "Downloads" / "VoiceInput2PC"
         )
         self.spool.mkdir(parents=True, exist_ok=True)
+        self._locks_guard = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}
 
     def begin(self, data: dict) -> dict:
         if not isinstance(data, dict):
@@ -100,65 +114,67 @@ class FileTransferManager:
         }
 
     def append(self, transfer_id: str, offset: int, body: bytes) -> dict:
-        meta = self._load(transfer_id)
         if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
             raise FileTransferError("分块偏移无效")
         if not isinstance(body, (bytes, bytearray)) or not body or len(body) > MAX_CHUNK_BYTES:
             raise FileTransferError("文件分块无效")
 
-        part = self._part_path(transfer_id)
-        current = part.stat().st_size if part.exists() else 0
-        if offset != current:
+        with self._lock_for(transfer_id):
+            meta = self._load(transfer_id)
+            part = self._part_path(transfer_id)
+            current = part.stat().st_size if part.exists() else 0
+            if offset != current:
+                return {
+                    "ok": False,
+                    "status": "offset_mismatch",
+                    "offset": current,
+                    "size": meta["size"],
+                }
+            if current + len(body) > meta["size"]:
+                raise FileTransferError("文件分块超过声明大小")
+
+            with part.open("ab", buffering=0) as stream:
+                stream.write(body)
+                stream.flush()
+                os.fsync(stream.fileno())
+            new_offset = current + len(body)
             return {
-                "ok": False,
-                "status": "offset_mismatch",
-                "offset": current,
+                "ok": True,
+                "status": "uploaded" if new_offset == meta["size"] else "receiving",
+                "offset": new_offset,
                 "size": meta["size"],
             }
-        if current + len(body) > meta["size"]:
-            raise FileTransferError("文件分块超过声明大小")
-
-        with part.open("ab", buffering=0) as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        new_offset = current + len(body)
-        return {
-            "ok": True,
-            "status": "uploaded" if new_offset == meta["size"] else "receiving",
-            "offset": new_offset,
-            "size": meta["size"],
-        }
 
     def complete(self, transfer_id: str) -> dict:
-        meta = self._load(transfer_id)
-        part = self._part_path(transfer_id)
-        if not part.exists():
-            raise FileTransferError("临时文件不存在")
-        size = part.stat().st_size
-        if size != meta["size"]:
-            return {"ok": False, "status": "incomplete", "offset": size, "size": meta["size"]}
+        with self._lock_for(transfer_id):
+            meta = self._load(transfer_id)
+            part = self._part_path(transfer_id)
+            if not part.exists():
+                raise FileTransferError("临时文件不存在")
+            size = part.stat().st_size
+            if size != meta["size"]:
+                return {"ok": False, "status": "incomplete", "offset": size, "size": meta["size"]}
 
-        digest = hashlib.sha256()
-        with part.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        if digest.hexdigest() != meta["sha256"]:
-            raise FileTransferError("文件完整性校验失败")
+            digest = hashlib.sha256()
+            with part.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != meta["sha256"]:
+                raise FileTransferError("文件完整性校验失败")
 
-        self.destination_dir.mkdir(parents=True, exist_ok=True)
-        target = self._unique_target(meta["name"])
-        os.replace(part, target)
-        try:
-            self._meta_path(transfer_id).unlink()
-        except FileNotFoundError:
-            pass
-        return {
-            "ok": True,
-            "status": "complete",
-            "name": target.name,
-            "size": meta["size"],
-        }
+            self.destination_dir.mkdir(parents=True, exist_ok=True)
+            target = self._unique_target(meta["name"])
+            os.replace(part, target)
+            try:
+                self._meta_path(transfer_id).unlink()
+            except FileNotFoundError:
+                pass
+            return {
+                "ok": True,
+                "status": "complete",
+                "name": target.name,
+                "size": meta["size"],
+            }
 
     def _load(self, transfer_id: str) -> dict:
         if not isinstance(transfer_id, str) or not _ID.fullmatch(transfer_id):
@@ -168,6 +184,12 @@ class FileTransferManager:
         except (OSError, json.JSONDecodeError) as exc:
             raise FileTransferError("传输不存在或状态损坏") from exc
         return data
+
+    def _lock_for(self, transfer_id: str) -> threading.Lock:
+        if not isinstance(transfer_id, str) or not _ID.fullmatch(transfer_id):
+            raise FileTransferError("传输编号无效")
+        with self._locks_guard:
+            return self._locks.setdefault(transfer_id, threading.Lock())
 
     def _meta_path(self, transfer_id: str) -> Path:
         return self.spool / f"{transfer_id}.json"
