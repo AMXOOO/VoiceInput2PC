@@ -137,7 +137,7 @@ public class MainActivity extends Activity {
         say("正在核对电脑身份和连接凭据…", false);
         worker.execute(() -> {
             try {
-                RelayTransport candidateClient = new RelayClient(candidate);
+                RelayTransport candidateClient = new RelayClient(this, candidate);
                 JSONObject result = candidateClient.request(candidate.host, null);
                 if (!Boolean.TRUE.equals(result.opt("ok"))
                         || !"VoiceInput2PC".equals(result.optString("app"))
@@ -158,13 +158,24 @@ public class MainActivity extends Activity {
                             : "已连接 · 先选中电脑输入框，再点开始", false);
                 });
             } catch (Exception failure) {
+                final String detail = pairingFailureText(failure);
                 handler.post(() -> {
                     if (destroyed || pairingButton == null) return;
                     pairingButton.setEnabled(true);
-                    say("没有通过电脑验证。请确认接收端已启动，再重新扫描；原有连接没有改变。", true);
+                    say(detail, true);
                 });
             }
         });
+    }
+
+    private String pairingFailureText(Exception failure) {
+        String message = failure == null ? "" : failure.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            message = failure == null ? "未知错误" : failure.getClass().getSimpleName();
+        }
+        message = message.replaceAll("tc[A-Za-z0-9_-]{20,4094}", "tc<redacted>");
+        if (message.length() > 360) message = message.substring(0, 360);
+        return "连接失败 · " + message;
     }
 
     private void showTypingScreen(PairingConfig pairing) {
@@ -172,7 +183,7 @@ public class MainActivity extends Activity {
         setTitle("语音输入电脑");
         try {
             host = prefs.getString("host", pairing.host);
-            client = new RelayClient(pairing);
+            client = new RelayClient(this, pairing);
         } catch (Exception invalid) {
             showPairingScreen("保存的连接配置无法使用，请重新配对。");
             return;

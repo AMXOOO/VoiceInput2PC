@@ -8,14 +8,22 @@ import java.util.Base64;
 
 public final class PairingCodec {
     private static final String PREFIX = "voiceinput2pc://pair?p=";
-    private static final int MAX_URI_LENGTH = 4096;
+    private static final int MAX_URI_LENGTH = 8192;
 
     private PairingCodec() {}
 
     public static String encode(PairingConfig config) {
         if (config == null) throw new IllegalArgumentException("missing pairing configuration");
-        String raw = "1\n" + config.host + "\n" + config.port + "\n"
-                + config.token + "\n" + config.fingerprint;
+        final String raw;
+        if (config.isTailcat()) {
+            raw = "2\n" + PairingConfig.TRANSPORT_TAILCAT + "\n"
+                    + config.host + "\n" + config.port + "\n"
+                    + config.token + "\n" + config.fingerprint + "\n" + config.tailcatAddress;
+        } else {
+            // Keep the original v1 payload byte-for-byte compatible with v0.4.x Android clients.
+            raw = "1\n" + config.host + "\n" + config.port + "\n"
+                    + config.token + "\n" + config.fingerprint;
+        }
         return PREFIX + Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
     }
@@ -45,19 +53,28 @@ public final class PairingCodec {
         } catch (CharacterCodingException error) {
             throw new IllegalArgumentException("invalid pairing payload", error);
         }
-        String[] fields = raw.split("\\n", -1);
-        if (fields.length != 5 || !"1".equals(fields[0])) {
-            throw new IllegalArgumentException("unsupported pairing payload");
+        String[] fields = raw.split("\n", -1);
+        if (fields.length == 5 && "1".equals(fields[0])) {
+            return new PairingConfig(fields[1], parsePort(fields[2]), fields[3], fields[4]);
         }
+        if (fields.length == 7 && "2".equals(fields[0])
+                && PairingConfig.TRANSPORT_TAILCAT.equals(fields[1])) {
+            return new PairingConfig(fields[2], parsePort(fields[3]), fields[4], fields[5],
+                    PairingConfig.TRANSPORT_TAILCAT, fields[6]);
+        }
+        throw new IllegalArgumentException("unsupported pairing payload");
+    }
+
+    private static int parsePort(String raw) {
         final int port;
         try {
-            port = Integer.parseInt(fields[2]);
+            port = Integer.parseInt(raw);
         } catch (NumberFormatException error) {
             throw new IllegalArgumentException("invalid port", error);
         }
-        if (!Integer.toString(port).equals(fields[2])) {
+        if (!Integer.toString(port).equals(raw)) {
             throw new IllegalArgumentException("invalid port");
         }
-        return new PairingConfig(fields[1], port, fields[3], fields[4]);
+        return port;
     }
 }

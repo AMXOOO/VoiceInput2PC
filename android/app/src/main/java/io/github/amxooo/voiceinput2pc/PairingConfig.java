@@ -4,18 +4,29 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 public final class PairingConfig {
+    public static final String TRANSPORT_LAN = "lan_https";
+    public static final String TRANSPORT_TAILCAT = "tailcat";
+
     private static final Pattern HOST = Pattern.compile("[A-Za-z0-9.-]+");
     private static final Pattern LABEL = Pattern.compile(
             "[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?");
     private static final Pattern TOKEN = Pattern.compile("[A-Za-z0-9_-]{32,128}");
     private static final Pattern FINGERPRINT = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern TAILCAT = Pattern.compile("tc[A-Za-z0-9_-]{20,4094}");
 
     public final String host;
     public final int port;
     public final String token;
     public final String fingerprint;
+    public final String transport;
+    public final String tailcatAddress;
 
     public PairingConfig(String host, int port, String token, String fingerprint) {
+        this(host, port, token, fingerprint, TRANSPORT_LAN, "");
+    }
+
+    public PairingConfig(String host, int port, String token, String fingerprint,
+                         String transport, String tailcatAddress) {
         validateHost(host);
         if (port < 1 || port > 65535) throw new IllegalArgumentException("invalid port");
         if (token == null || !TOKEN.matcher(token).matches()) {
@@ -24,10 +35,27 @@ public final class PairingConfig {
         if (fingerprint == null || !FINGERPRINT.matcher(fingerprint).matches()) {
             throw new IllegalArgumentException("invalid fingerprint");
         }
+        if (!TRANSPORT_LAN.equals(transport) && !TRANSPORT_TAILCAT.equals(transport)) {
+            throw new IllegalArgumentException("invalid transport");
+        }
+        String address = tailcatAddress == null ? "" : tailcatAddress;
+        if (TRANSPORT_TAILCAT.equals(transport)) {
+            if (!TAILCAT.matcher(address).matches()) {
+                throw new IllegalArgumentException("invalid tailcat address");
+            }
+        } else if (!address.isEmpty()) {
+            throw new IllegalArgumentException("tailcat address is only valid for tailcat transport");
+        }
         this.host = host;
         this.port = port;
         this.token = token;
         this.fingerprint = fingerprint;
+        this.transport = transport;
+        this.tailcatAddress = address;
+    }
+
+    public boolean isTailcat() {
+        return TRANSPORT_TAILCAT.equals(transport);
     }
 
     private static void validateHost(String host) {
@@ -49,17 +77,19 @@ public final class PairingConfig {
         if (!(other instanceof PairingConfig)) return false;
         PairingConfig value = (PairingConfig) other;
         return port == value.port && host.equals(value.host)
-                && token.equals(value.token) && fingerprint.equals(value.fingerprint);
+                && token.equals(value.token) && fingerprint.equals(value.fingerprint)
+                && transport.equals(value.transport) && tailcatAddress.equals(value.tailcatAddress);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(host, port, token, fingerprint);
+        return Objects.hash(host, port, token, fingerprint, transport, tailcatAddress);
     }
 
     @Override
     public String toString() {
         return "PairingConfig{host='" + host + "', port=" + port
-                + ", token=<redacted>, fingerprint=<redacted>}";
+                + ", transport='" + transport
+                + "', token=<redacted>, fingerprint=<redacted>, tailcatAddress=<redacted>}";
     }
 }

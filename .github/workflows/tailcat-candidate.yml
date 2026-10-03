@@ -1,0 +1,85 @@
+name: VoiceInput2PC CI
+
+on:
+  push:
+    branches:
+      - main
+      - feat/tailcat-transport-v0.5
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: voiceinput2pc-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Build Tailcat Android Go bridge
+        run: python scripts/build_tailcat_android_bridge.py
+
+      - name: Install Python test dependencies
+        run: python -m pip install cryptography
+
+      - name: Python tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Java pairing compatibility tests
+        run: |
+          mkdir -p tests/java-build
+          javac -encoding UTF-8 -d tests/java-build             android/app/src/main/java/io/github/amxooo/voiceinput2pc/PairingConfig.java             android/app/src/main/java/io/github/amxooo/voiceinput2pc/PairingCodec.java             tests/PairingCodecTest.java
+          java -cp tests/java-build io.github.amxooo.voiceinput2pc.PairingCodecTest
+
+      - name: Build Android debug APK
+        run: gradle -p android :app:assembleDebug --no-daemon
+
+      - name: Verify Go bridge runtime
+        run: |
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/arm64-v8a/libgojni.so'
+          if unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'libtailcat.so'; then
+            echo "superseded Tailcat CLI runtime is still packaged" >&2
+            exit 1
+          fi
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create build environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+      - name: Build Windows candidate
+        shell: pwsh
+        run: .\scripts\build_windows_release.ps1
+
+      - name: Smoke-test embedded Tailcat from final Windows ZIP
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP 'voiceinput2pc-tailcat-smoke'
+          Expand-Archive -LiteralPath 'release/output/windows-v0.5.0/VoiceInput2PC-Windows-v0.5.0.zip' -DestinationPath $testRoot -Force
+          .\.venv\Scripts\python.exe scripts\verify_tailcat_runtime.py (Join-Path $testRoot '_internal\tailcat\tailcat.exe')
