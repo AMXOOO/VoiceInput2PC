@@ -16,7 +16,7 @@ final class TailcatForwarder {
     private TailcatForwarder(Context context, String tailcatAddress, int remotePort) throws Exception {
         if (context == null) throw new IllegalArgumentException("Android context is required for Tailcat");
         try {
-            localPort = TailcatNativeBridge.startForward(tailcatAddress, remotePort);
+            localPort = TailcatNativeBridge.startForward(context, tailcatAddress, remotePort);
         } catch (Exception failure) {
             throw new Exception("阶段1/4：Tailcat Go Bridge 启动失败：" + safe(failure.getMessage()), failure);
         }
