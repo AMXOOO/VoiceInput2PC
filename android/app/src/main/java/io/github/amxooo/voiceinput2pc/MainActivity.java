@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -27,7 +28,7 @@ public class MainActivity extends Activity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private CommitEditText editor;
     private TextView status, destination, counter;
-    private Button start, fresh, retry, receive;
+    private Button start, fresh, retry, receive, sendFile;
     private Button pairingButton;
     private EditText pairingInput;
     private SharedPreferences prefs;
@@ -36,9 +37,11 @@ public class MainActivity extends Activity {
     private CommitTracker tracker;
     private String host, receiveQueueHost, legacyPendingRaw = "";
     private boolean busy, loading, destroyed, resumed, storageBlocked, sendingText, receiveQueued;
+    private boolean fileTransferSupported;
     private int activationEpoch, receiveQueueEpoch = -1;
     private final int green = Color.rgb(22,112,91);
     private final Runnable flush = this::transmitCommitted;
+    private static final int PICK_FILE_REQUEST = 2606;
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private TextView label(String text, int size, int color) {
@@ -153,6 +156,8 @@ public class MainActivity extends Activity {
                     }
                     client = candidateClient;
                     showTypingScreen(candidate);
+                    fileTransferSupported = hasFeature(result, "file-upload-v1");
+                    updateControls();
                     say(result.optBoolean("paused")
                             ? "已连接 · 请先在电脑启用输入，再选中输入框"
                             : "已连接 · 先选中电脑输入框，再点开始", false);
@@ -180,6 +185,7 @@ public class MainActivity extends Activity {
 
     private void showTypingScreen(PairingConfig pairing) {
         clearQueuedReceive();
+        fileTransferSupported = false;
         setTitle("语音输入电脑");
         try {
             host = prefs.getString("host", pairing.host);
@@ -255,19 +261,56 @@ public class MainActivity extends Activity {
         startParams.leftMargin=dp(8); actions.addView(start,startParams);
         LinearLayout.LayoutParams receiveParams = new LinearLayout.LayoutParams(0,dp(58),1);
         receiveParams.leftMargin=dp(8); actions.addView(receive,receiveParams); layout.addView(actions,row(-2));
-        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。换电脑窗口后请重新开始。换行、回车、Tab 会转为空格。",12,Color.GRAY);
+        sendFile = new Button(this); sendFile.setText("发送文件到电脑");
+        LinearLayout.LayoutParams fileParams = row(52); fileParams.topMargin = dp(8);
+        layout.addView(sendFile, fileParams);
+        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。文件发送支持单文件 ≤ 200MB，保存到电脑 Downloads/VoiceInput2PC。",12,Color.GRAY);
         hint.setPadding(0,dp(8),0,dp(2)); layout.addView(hint,row(-2));
         setContentView(layout);
         loading=true; editor.setText(draft); editor.setSelection(editor.length()); loading=false;
         editor.setEditObserver(this::edited);
         start.setOnClickListener(v -> toggleStart()); fresh.setOnClickListener(v -> newDraft());
         receive.setOnClickListener(v -> receiveFromComputer());
+        sendFile.setOnClickListener(v -> chooseFile());
         updateControls();
         if (pending != null) uncertainHint();
         else if (tracker.isSaved()) say("电脑只保存了文字，未自动输入。点“保留并重置”核对后恢复。",true);
         else if (tracker.hasConflict()) say("已输入部分发生修改。电脑原文不会改动，请保留并重置。",true);
         else if (!draft.isEmpty()) say("草稿已恢复，当前暂停。点开始前请核对电脑已有文字。",false);
         else health();
+        probeCapabilities();
+    }
+
+    private void probeCapabilities() {
+        final RelayTransport probeClient = client;
+        final String address = host;
+        worker.execute(() -> {
+            try {
+                JSONObject result = probeClient.request(address, null);
+                final boolean supported = Boolean.TRUE.equals(result.opt("ok"))
+                        && hasFeature(result, "file-upload-v1");
+                handler.post(() -> {
+                    if (destroyed || probeClient != client || !address.equals(host)) return;
+                    fileTransferSupported = supported;
+                    updateControls();
+                });
+            } catch (Exception ignored) {
+                handler.post(() -> {
+                    if (destroyed || probeClient != client || !address.equals(host)) return;
+                    fileTransferSupported = false;
+                    updateControls();
+                });
+            }
+        });
+    }
+
+    private boolean hasFeature(JSONObject result, String feature) {
+        org.json.JSONArray features = result.optJSONArray("features");
+        if (features == null) return false;
+        for (int i = 0; i < features.length(); i++) {
+            if (feature.equals(features.optString(i))) return true;
+        }
+        return false;
     }
 
     private boolean save() {
@@ -301,6 +344,7 @@ public class MainActivity extends Activity {
             || (sendingText && !receiveQueued && cleanForReceive && tracker.pending() != null));
         retry.setVisibility(tracker.pending() != null && !tracker.pending().session.isEmpty() ? View.VISIBLE : View.GONE);
         retry.setEnabled(!busy);
+        if (sendFile != null) sendFile.setEnabled(!busy && resumed && fileTransferSupported);
         counter.setText("电脑已接收输入 " + tracker.sent().codePointCount(0,tracker.sent().length())
             + " 字 · 本地草稿 " + tracker.draft().codePointCount(0,tracker.draft().length()) + " 字");
         if (tracker.isActive() && resumed) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -537,6 +581,98 @@ public class MainActivity extends Activity {
         }
         return true;
     }
+    private void chooseFile() {
+        if (busy || destroyed || !resumed) return;
+        if (tracker != null && tracker.isActive()) {
+            pauseLocal();
+            save();
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, PICK_FILE_REQUEST);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_FILE_REQUEST || resultCode != RESULT_OK
+                || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        try {
+            int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            getContentResolver().takePersistableUriPermission(uri, flags);
+        } catch (Exception ignored) {
+        }
+        sendSelectedFile(uri);
+    }
+
+    private void sendSelectedFile(Uri uri) {
+        if (busy || destroyed) return;
+        busy = true;
+        updateControls();
+        say("正在读取文件并计算 SHA-256…", false);
+        final String address = host;
+        final RelayTransport transferClient = client;
+        worker.execute(() -> {
+            try {
+                AndroidFileTransfer.Metadata metadata = AndroidFileTransfer.inspect(
+                        getContentResolver(), uri, (done, total) -> {
+                            if (done == 0) return;
+                            final long mb = done / (1024 * 1024);
+                            handler.post(() -> {
+                                if (!destroyed) say("正在校验文件 · 已读取 " + mb + " MB", false);
+                            });
+                        });
+                handler.post(() -> {
+                    if (!destroyed) say("准备发送 " + metadata.name + " · "
+                            + formatBytes(metadata.size), false);
+                });
+                JSONObject result = AndroidFileTransfer.upload(
+                        getContentResolver(), uri, metadata, transferClient, address,
+                        (sent, total) -> {
+                            final int percent = total <= 0 ? 0 : (int)Math.min(100, sent * 100 / total);
+                            handler.post(() -> {
+                                if (!destroyed) say("正在发送 " + metadata.name + " · " + percent + "%", false);
+                            });
+                        });
+                String savedName = result.optString("name", metadata.name);
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy = false;
+                    updateControls();
+                    say("文件已发送到电脑 · " + savedName, false);
+                });
+            } catch (Exception error) {
+                final String detail = safeFileError(error);
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy = false;
+                    updateControls();
+                    say("文件发送失败 · " + detail + " · 可重新选择同一文件续传", true);
+                });
+            }
+        });
+    }
+
+    private String safeFileError(Exception error) {
+        String message = error == null ? "" : error.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            message = error == null ? "未知错误" : error.getClass().getSimpleName();
+        }
+        message = message.replaceAll("tc[A-Za-z0-9_-]{20,4094}", "tc<redacted>");
+        return message.length() > 220 ? message.substring(0, 220) : message;
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes >= 1024L * 1024L) {
+            return String.format(java.util.Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+        }
+        if (bytes >= 1024L) {
+            return String.format(java.util.Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        }
+        return bytes + " B";
+    }
+
     private void newDraft() {
         if (busy || destroyed) return;
         pauseLocal();
@@ -575,9 +711,13 @@ public class MainActivity extends Activity {
                 JSONObject result=client.request(address,null);
                 handler.post(() -> {
                     if (destroyed || busy || tracker.isActive() || tracker.pending()!=null || tracker.isSaved() || tracker.hasConflict()) return;
-                    if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2)
+                    if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2) {
                         say("电脑接收端需要更新到远程键盘版本。",true);
-                    else say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                    } else {
+                        fileTransferSupported = hasFeature(result, "file-upload-v1");
+                        updateControls();
+                        say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                    }
                 });
             } catch(Exception e) {
                 handler.post(() -> {

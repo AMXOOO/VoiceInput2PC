@@ -17,6 +17,7 @@ import pystray
 from PIL import Image, ImageDraw
 from receiver.core import Relay, InvalidMessage
 from receiver.http_server import make_server
+from receiver.file_transfer import FileTransferManager
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
 from receiver.win_input import type_text, capture_target, copy_text
@@ -146,9 +147,10 @@ def main():
         port = current_pairing.port
         stage = '打开本机消息记录'
         relay = Relay(folder / 'messages.db', type_text, target_provider=capture_target)
+        file_manager = FileTransferManager(folder)
         stage = '启动监听'
         server = make_server(('0.0.0.0', current_pairing.port), relay, current_pairing.token,
-                             folder / 'cert.pem', folder / 'key.pem')
+                             folder / 'cert.pem', folder / 'key.pem', file_manager=file_manager)
     except Exception as exc:
         detail = startup_error_message(exc, stage, folder, port)
         try:
@@ -242,7 +244,8 @@ def main():
                 folder, current_pairing.host, current_pairing.port, regenerate=True)
             port = current_pairing.port
             server = make_server(('0.0.0.0', current_pairing.port), relay,
-                                 current_pairing.token, folder / 'cert.pem', folder / 'key.pem')
+                                 current_pairing.token, folder / 'cert.pem', folder / 'key.pem',
+                                 file_manager=file_manager)
             threading.Thread(target=server.serve_forever, daemon=True).start()
         except Exception as exc:
             detail = startup_error_message(exc, '更换配对码', folder, port)

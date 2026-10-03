@@ -74,6 +74,40 @@ public final class RelayClient implements RelayTransport {
         return request(host, "/outbox/ack", new JSONObject().put("id", id));
     }
 
+    public JSONObject fileBegin(String host, JSONObject metadata) throws Exception {
+        return request(host, "/file/begin", metadata);
+    }
+
+    public JSONObject fileComplete(String host, String transferId) throws Exception {
+        return request(host, "/file/complete", new JSONObject().put("id", transferId));
+    }
+
+    public JSONObject fileChunk(String host, String transferId, long offset,
+                                byte[] data, int length) throws Exception {
+        if (data == null || length <= 0 || length > data.length || length > 1024 * 1024) {
+            throw new IllegalArgumentException("文件分块无效");
+        }
+        String target = forcedHost == null ? host : forcedHost;
+        if (!target.matches("[A-Za-z0-9.-]+")) throw new Exception("电脑地址格式不正确");
+        URL url = new URL("https://" + target + ":" + port + "/file/chunk");
+        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+        configure(conn);
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/octet-stream");
+        conn.setRequestProperty("X-Transfer-Id", transferId);
+        conn.setRequestProperty("X-Transfer-Offset", Long.toString(offset));
+        conn.setFixedLengthStreamingMode(length);
+        try {
+            try (java.io.OutputStream stream = conn.getOutputStream()) {
+                stream.write(data, 0, length);
+            }
+            return readJsonResponse(conn);
+        } finally {
+            conn.disconnect();
+        }
+    }
+
     private JSONObject request(String host, String path, JSONObject body) throws Exception {
         String target = forcedHost == null ? host : forcedHost;
         if (!target.matches("[A-Za-z0-9.-]+")) throw new Exception("电脑地址格式不正确");
@@ -84,14 +118,7 @@ public final class RelayClient implements RelayTransport {
         } catch (Exception openFailure) {
             throw new Exception("阶段3/4：无法打开电脑连接：" + safeMessage(openFailure), openFailure);
         }
-        conn.setSSLSocketFactory(context.getSocketFactory());
-        // Server identity is pinned to the bundled certificate fingerprint, not the tunnel hostname.
-        conn.setHostnameVerifier((name, session) -> true);
-        conn.setInstanceFollowRedirects(false);
-        conn.setConnectTimeout(7000);
-        conn.setReadTimeout(9000);
-        conn.setRequestProperty("Authorization", "Bearer " + token);
-        conn.setRequestProperty("Connection", "close");
+        configure(conn);
         try {
             if (body != null) {
                 conn.setRequestMethod("POST");
@@ -101,25 +128,41 @@ public final class RelayClient implements RelayTransport {
                 conn.setFixedLengthStreamingMode(data.length);
                 try (java.io.OutputStream stream = conn.getOutputStream()) { stream.write(data); }
             }
-            final int code;
-            try {
-                code = conn.getResponseCode();
-            } catch (javax.net.ssl.SSLHandshakeException tlsFailure) {
-                throw new Exception("阶段3/4：电脑证书验证失败：" + safeMessage(tlsFailure), tlsFailure);
-            } catch (java.net.ConnectException connectFailure) {
-                throw new Exception("阶段2/4：跨网络隧道没有连到电脑：" + safeMessage(connectFailure), connectFailure);
-            } catch (java.net.SocketTimeoutException timeout) {
-                throw new Exception("阶段2/4：连接电脑超时：" + safeMessage(timeout), timeout);
-            }
-            if (code != 200) {
-                throw new Exception(code == 401
-                        ? "阶段4/4：电脑连接凭据不匹配"
-                        : "阶段4/4：电脑未接受消息（" + code + "）");
-            }
-            try (InputStream stream = conn.getInputStream()) {
-                return new JSONObject(read(stream));
-            }
+            return readJsonResponse(conn);
         } finally { conn.disconnect(); }
+    }
+
+    private void configure(HttpsURLConnection conn) {
+        conn.setSSLSocketFactory(context.getSocketFactory());
+        // Server identity is pinned to the certificate fingerprint, not the tunnel hostname.
+        conn.setHostnameVerifier((name, session) -> true);
+        conn.setInstanceFollowRedirects(false);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(20000);
+        conn.setRequestProperty("Authorization", "Bearer " + token);
+        conn.setRequestProperty("Connection", "close");
+    }
+
+    private JSONObject readJsonResponse(HttpsURLConnection conn) throws Exception {
+        final int code;
+        try {
+            code = conn.getResponseCode();
+        } catch (javax.net.ssl.SSLHandshakeException tlsFailure) {
+            throw new Exception("电脑证书验证失败：" + safeMessage(tlsFailure), tlsFailure);
+        } catch (java.net.ConnectException connectFailure) {
+            throw new Exception("连接没有到达电脑：" + safeMessage(connectFailure), connectFailure);
+        } catch (java.net.SocketTimeoutException timeout) {
+            throw new Exception("连接电脑超时：" + safeMessage(timeout), timeout);
+        }
+        InputStream stream = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+        JSONObject result = stream == null ? new JSONObject() : new JSONObject(read(stream));
+        if (code != 200) {
+            String note = result.optString("note", "");
+            throw new Exception(code == 401
+                    ? "电脑连接凭据不匹配"
+                    : (note.isEmpty() ? "电脑未接受请求（" + code + "）" : note));
+        }
+        return result;
     }
 
     private static String safeMessage(Throwable error) {
