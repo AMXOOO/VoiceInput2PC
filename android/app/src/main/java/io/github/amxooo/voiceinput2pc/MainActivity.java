@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
     private CommitTracker tracker;
     private String host, receiveQueueHost, legacyPendingRaw = "";
     private boolean busy, loading, destroyed, resumed, storageBlocked, sendingText, receiveQueued;
+    private boolean fileTransferSupported;
     private int activationEpoch, receiveQueueEpoch = -1;
     private final int green = Color.rgb(22,112,91);
     private final Runnable flush = this::transmitCommitted;
@@ -155,6 +156,8 @@ public class MainActivity extends Activity {
                     }
                     client = candidateClient;
                     showTypingScreen(candidate);
+                    fileTransferSupported = hasFeature(result, "file-upload-v1");
+                    updateControls();
                     say(result.optBoolean("paused")
                             ? "已连接 · 请先在电脑启用输入，再选中输入框"
                             : "已连接 · 先选中电脑输入框，再点开始", false);
@@ -182,6 +185,7 @@ public class MainActivity extends Activity {
 
     private void showTypingScreen(PairingConfig pairing) {
         clearQueuedReceive();
+        fileTransferSupported = false;
         setTitle("语音输入电脑");
         try {
             host = prefs.getString("host", pairing.host);
@@ -276,6 +280,15 @@ public class MainActivity extends Activity {
         else health();
     }
 
+    private boolean hasFeature(JSONObject result, String feature) {
+        org.json.JSONArray features = result.optJSONArray("features");
+        if (features == null) return false;
+        for (int i = 0; i < features.length(); i++) {
+            if (feature.equals(features.optString(i))) return true;
+        }
+        return false;
+    }
+
     private boolean save() {
         if (destroyed || tracker == null) return false;
         CommitTracker.Pending pending = tracker.pending();
@@ -307,7 +320,7 @@ public class MainActivity extends Activity {
             || (sendingText && !receiveQueued && cleanForReceive && tracker.pending() != null));
         retry.setVisibility(tracker.pending() != null && !tracker.pending().session.isEmpty() ? View.VISIBLE : View.GONE);
         retry.setEnabled(!busy);
-        if (sendFile != null) sendFile.setEnabled(!busy && resumed);
+        if (sendFile != null) sendFile.setEnabled(!busy && resumed && fileTransferSupported);
         counter.setText("电脑已接收输入 " + tracker.sent().codePointCount(0,tracker.sent().length())
             + " 字 · 本地草稿 " + tracker.draft().codePointCount(0,tracker.draft().length()) + " 字");
         if (tracker.isActive() && resumed) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -674,9 +687,13 @@ public class MainActivity extends Activity {
                 JSONObject result=client.request(address,null);
                 handler.post(() -> {
                     if (destroyed || busy || tracker.isActive() || tracker.pending()!=null || tracker.isSaved() || tracker.hasConflict()) return;
-                    if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2)
+                    if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2) {
                         say("电脑接收端需要更新到远程键盘版本。",true);
-                    else say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                    } else {
+                        fileTransferSupported = hasFeature(result, "file-upload-v1");
+                        updateControls();
+                        say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                    }
                 });
             } catch(Exception e) {
                 handler.post(() -> {
