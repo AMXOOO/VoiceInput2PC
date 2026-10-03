@@ -243,8 +243,17 @@ public final class ConnectionManager implements RelayTransport {
     }
 
     private boolean validHost(String value) {
-        return value != null && !value.isEmpty() && value.length() <= 253
-                && value.matches("[A-Za-z0-9.-]+") && !value.endsWith(".");
+        if (value == null || value.isEmpty() || value.length() > 253
+                || !value.matches("[A-Za-z0-9.-]+") || value.endsWith(".")) {
+            return false;
+        }
+        // Auto-LAN discovery intentionally excludes 100.64/10 and public
+        // addresses so a separately installed VPN never masquerades as the
+        // preferred local path.
+        if (value.matches("^10(?:\\.\\d{1,3}){3}$")) return true;
+        if (value.matches("^192\\.168(?:\\.\\d{1,3}){2}$")) return true;
+        if (value.matches("^172\\.(1[6-9]|2\\d|3[01])(?:\\.\\d{1,3}){2}$")) return true;
+        return false;
     }
 
     private String safe(Throwable error) {
