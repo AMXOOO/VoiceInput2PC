@@ -4,6 +4,7 @@ import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .core import InvalidMessage
 from .file_transfer import FileTransferError, MAX_CHUNK_BYTES
+from .pairing import detect_private_addresses
 
 
 def make_server(address, relay, token, certificate=None, private_key=None, file_manager=None):
@@ -57,7 +58,14 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                 if not self.authorized():
                     self.reply(401, {'ok': False, 'note': '连接凭据不匹配'})
                 elif self.path == '/health':
-                    self.reply(200, {'ok': True, 'app': 'VoiceInput2PC', 'paused': relay.paused, 'protocol': 2, 'features': ['file-upload-v1'] if file_manager is not None else []})
+                    self.reply(200, {
+                        'ok': True,
+                        'app': 'VoiceInput2PC',
+                        'paused': relay.paused,
+                        'protocol': 2,
+                        'features': ['file-upload-v1'] if file_manager is not None else [],
+                        'lan_hosts': detect_private_addresses(),
+                    })
                 elif self.path == '/outbox':
                     self.reply(200, relay.phone_outbox())
                 else:
