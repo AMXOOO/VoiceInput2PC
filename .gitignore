@@ -37,3 +37,5 @@ vendor/tailcat/
 android/app/src/main/jniLibs/arm64-v8a/libtailcat.so
 
 android/app/libs/tailcatbridge.aar
+
+mobile/tailcatbridge/go.sum
