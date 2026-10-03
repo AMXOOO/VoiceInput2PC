@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/tailscale/tailcat"
 )
@@ -44,6 +45,21 @@ func StartForward(address string, remotePort int) (int, error) {
 		return 0, fmt.Errorf("listen localhost: %w", err)
 	}
 	cl := tailcat.NewClient(tailcat.Addr(address))
+
+	// Prove that the Tailcat path can actually reach the receiver before
+	// returning success to Android. This avoids reporting a local listener as
+	// "connected" when DERP/DNS/path bootstrap has already failed.
+	probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
+	probe, err := cl.DialTCPPort(probeCtx, uint16(remotePort))
+	probeCancel()
+	if err != nil {
+		_ = ln.Close()
+		_ = cl.Close()
+		cancel()
+		return 0, fmt.Errorf("tailcat dial receiver: %w", err)
+	}
+	_ = probe.Close()
+
 	f := &forwarder{cancel: cancel, ln: ln, client: cl}
 	current = f
 	go f.acceptLoop(ctx, uint16(remotePort))
