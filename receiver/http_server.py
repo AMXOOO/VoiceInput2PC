@@ -58,7 +58,7 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                 if not self.authorized():
                     self.reply(401, {'ok': False, 'note': '连接凭据不匹配'})
                 elif self.path == '/health':
-                    self.reply(200, {'ok': True, 'app': 'VoiceInput2PC', 'paused': relay.paused, 'protocol': 2})
+                    self.reply(200, {'ok': True, 'app': 'VoiceInput2PC', 'paused': relay.paused, 'protocol': 2, 'features': ['file-upload-v1'] if file_manager is not None else []})
                 elif self.path == '/outbox':
                     self.reply(200, relay.phone_outbox())
                 elif self.path.startswith('/file/status'):
@@ -74,6 +74,8 @@ def make_server(address, relay, token, certificate=None, private_key=None, file_
                                          'size': meta['size'], 'name': meta['name']})
                 else:
                     self.reply(404, {'ok': False})
+            except FileTransferError as exc:
+                self.reply(400, {'ok': False, 'note': str(exc)})
             except (TimeoutError, BrokenPipeError, ConnectionResetError):
                 self.close_connection = True
             except Exception:
