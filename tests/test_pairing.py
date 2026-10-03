@@ -60,6 +60,17 @@ class PairingTests(unittest.TestCase):
         self.assertTrue(raw.endswith(address))
         self.assertNotIn(address, repr(value))
 
+
+    def test_unified_pairing_rejects_missing_identity(self):
+        address = 'tc' + ('D' * 64)
+        with self.assertRaises(ValueError):
+            encode_pairing(Pairing(
+                '192.168.1.20', 23337, 'E' * 43, '12' * 32,
+                transport=TRANSPORT_AUTO,
+                tailcat_address=address,
+                device_id='',
+            ))
+
     def test_invalid_pairing_is_rejected(self):
         valid = Pairing('pc.lan', 23337, 'aB_-' * 10, '12' * 32)
         invalid_values = (
