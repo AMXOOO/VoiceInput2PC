@@ -333,6 +333,9 @@ public class MainActivity extends Activity {
         Button pair = new Button(this); pair.setText("打开系统蓝牙配对");
         pair.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
         layout.addView(pair,row(50));
+        Button retryBluetooth = new Button(this); retryBluetooth.setText("重新初始化蓝牙键盘");
+        retryBluetooth.setOnClickListener(v -> { if (bluetoothKeyboard != null) bluetoothKeyboard.start(); });
+        layout.addView(retryBluetooth,row(48));
         Button devices = new Button(this); devices.setText("选择已配对电脑");
         devices.setOnClickListener(v -> {
             if (bluetoothKeyboard == null) { bluetoothStatus.setText("蓝牙尚未初始化"); return; }
@@ -854,7 +857,11 @@ public class MainActivity extends Activity {
             }
         });
     }
-    @Override public void onResume() { super.onResume(); resumed=true; if(tracker!=null) updateControls(); }
+    @Override public void onResume() {
+        super.onResume(); resumed=true;
+        if (tracker!=null) updateControls();
+        if (bluetoothKeyboard != null && bluetoothKeyboard.hasPermission()) bluetoothKeyboard.start();
+    }
     @Override public void onPause() {
         resumed=false;
         clearQueuedReceive();
