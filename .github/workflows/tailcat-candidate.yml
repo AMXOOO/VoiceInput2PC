@@ -60,6 +60,12 @@ jobs:
           javac -encoding UTF-8 -d tests/java-build android/app/src/main/java/io/github/amxooo/voiceinput2pc/PairingConfig.java android/app/src/main/java/io/github/amxooo/voiceinput2pc/PairingCodec.java tests/PairingCodecTest.java
           java -cp tests/java-build io.github.amxooo.voiceinput2pc.PairingCodecTest
 
+      - name: HID Unicode encoding unit tests
+        run: |
+          mkdir -p tests/hid-build
+          javac -encoding UTF-8 -d tests/hid-build android/app/src/main/java/io/github/amxooo/voiceinput2pc/HidTextEncoder.java tests/HidTextEncoderTest.java
+          java -cp tests/hid-build io.github.amxooo.voiceinput2pc.HidTextEncoderTest
+
       - name: Build Android debug APK
         run: gradle -p android :app:assembleDebug --no-daemon
 
