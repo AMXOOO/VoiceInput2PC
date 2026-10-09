@@ -837,6 +837,6 @@ public class MainActivity extends Activity {
         super.onPause();
     }
     @Override public void onDestroy() {
-        destroyed=true; clearQueuedReceive(); handler.removeCallbacksAndMessages(null); worker.shutdown(); super.onDestroy();
+        destroyed=true; clearQueuedReceive(); if (bluetoothKeyboard != null) bluetoothKeyboard.close(); handler.removeCallbacksAndMessages(null); worker.shutdown(); super.onDestroy();
     }
 }
