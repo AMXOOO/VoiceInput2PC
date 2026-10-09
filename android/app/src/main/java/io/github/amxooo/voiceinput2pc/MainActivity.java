@@ -1,6 +1,11 @@
 package io.github.amxooo.voiceinput2pc;
 
 import android.app.Activity;
+import android.Manifest;
+import android.bluetooth.BluetoothDevice;
+import android.os.Build;
+import android.content.pm.PackageManager;
+import android.provider.Settings;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -27,6 +32,8 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private CommitEditText editor;
+    private BluetoothKeyboard bluetoothKeyboard;
+    private static final int BLUETOOTH_PERMISSION_REQUEST = 2607;
     private TextView status, destination, counter;
     private Button start, fresh, retry, receive, sendFile;
     private Button pairingButton;
@@ -121,6 +128,10 @@ public class MainActivity extends Activity {
         pairingButton.setBackgroundTintList(ColorStateList.valueOf(green));
         pairingButton.setOnClickListener(v -> importPairing(pairingInput.getText().toString().trim()));
         layout.addView(pairingButton, row(58));
+        Button bluetoothEntry = new Button(this);
+        bluetoothEntry.setText("蓝牙免安装输入（无需电脑端）");
+        bluetoothEntry.setOnClickListener(v -> showBluetoothScreen());
+        layout.addView(bluetoothEntry, row(52));
         TextView safety = label("配对码相当于连接密码，只在自己的手机和电脑之间使用。应用不需要麦克风或相机权限。",
                 12, Color.GRAY);
         safety.setPadding(0, dp(12), 0, 0);
@@ -279,6 +290,10 @@ public class MainActivity extends Activity {
         sendFile = new Button(this); sendFile.setText("发送文件到电脑");
         LinearLayout.LayoutParams fileParams = row(52); fileParams.topMargin = dp(8);
         layout.addView(sendFile, fileParams);
+        Button bluetoothEntry = new Button(this);
+        bluetoothEntry.setText("蓝牙免安装输入");
+        bluetoothEntry.setOnClickListener(v -> { pauseLocal(); save(); showBluetoothScreen(); });
+        layout.addView(bluetoothEntry, row(52));
         TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。文件发送支持单文件 ≤ 200MB，保存到电脑 Downloads/VoiceInput2PC。",12,Color.GRAY);
         hint.setPadding(0,dp(8),0,dp(2)); layout.addView(hint,row(-2));
         setContentView(layout);
@@ -294,6 +309,77 @@ public class MainActivity extends Activity {
         else if (!draft.isEmpty()) say("草稿已恢复，当前暂停。点开始前请核对电脑已有文字。",false);
         else health();
         probeCapabilities();
+    }
+
+    private void showBluetoothScreen() {
+        setTitle("手机万能输入法 · 蓝牙");
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(20),dp(22),dp(20),dp(18));
+        layout.setBackgroundColor(Color.rgb(247,248,244));
+        TextView heading = label("蓝牙免安装输入",25,green);
+        heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        layout.addView(heading,row(-2));
+        TextView guide = label("电脑不需要安装接收端。先在系统蓝牙设置中配对电脑，然后返回选择设备。当前仅支持英文、数字和 ASCII 符号；中文不会被错误转写成拼音。",14,Color.DKGRAY);
+        guide.setPadding(0,dp(10),0,dp(10));
+        layout.addView(guide,row(-2));
+        TextView bluetoothStatus = label("尚未初始化蓝牙键盘",14,green);
+        layout.addView(bluetoothStatus,row(-2));
+        EditText input = new EditText(this);
+        input.setHint("使用手机输入法输入或语音转写英文文字");
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setMinLines(3);
+        layout.addView(input,new LinearLayout.LayoutParams(-1,0,1));
+        Button pair = new Button(this); pair.setText("打开系统蓝牙配对");
+        pair.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
+        layout.addView(pair,row(50));
+        Button devices = new Button(this); devices.setText("选择已配对电脑");
+        devices.setOnClickListener(v -> {
+            if (bluetoothKeyboard == null) { bluetoothStatus.setText("蓝牙尚未初始化"); return; }
+            java.util.List<BluetoothDevice> paired = bluetoothKeyboard.paired();
+            if (paired.isEmpty()) { bluetoothStatus.setText("没有已配对设备，请先在系统蓝牙设置中配对"); return; }
+            String[] names = new String[paired.size()];
+            for (int i=0;i<paired.size();i++) names[i]=BluetoothKeyboard.safeName(paired.get(i));
+            new AlertDialog.Builder(this).setTitle("选择电脑蓝牙设备")
+                .setItems(names,(dialog,which)->bluetoothKeyboard.connect(paired.get(which))).show();
+        });
+        layout.addView(devices,row(50));
+        Button send = new Button(this); send.setText("将文字输入电脑");
+        send.setOnClickListener(v -> {
+            if (bluetoothKeyboard == null) { bluetoothStatus.setText("蓝牙尚未初始化"); return; }
+            String value=input.getText().toString();
+            String invalid=BluetoothKeyboard.validateText(value);
+            if (invalid != null) { bluetoothStatus.setText(invalid); return; }
+            new AlertDialog.Builder(this).setTitle("确认输入到电脑")
+                .setMessage("请先选中电脑上的目标输入框。将发送 " + value.length() + " 个按键，不自动按回车。")
+                .setNegativeButton("取消",null)
+                .setPositiveButton("发送",(dialog,which)->bluetoothKeyboard.send(value)).show();
+        });
+        layout.addView(send,row(54));
+        Button back = new Button(this); back.setText("返回");
+        back.setOnClickListener(v -> {
+            if (bluetoothKeyboard != null) { bluetoothKeyboard.close(); bluetoothKeyboard=null; }
+            PairingConfig pairing = PairingStore.load(prefs);
+            if (pairing == null) showPairingScreen("请连接电脑接收端，或选择蓝牙免安装输入。");
+            else showTypingScreen(pairing);
+        });
+        layout.addView(back,row(48));
+        setContentView(layout);
+        if (bluetoothKeyboard != null) bluetoothKeyboard.close();
+        bluetoothKeyboard = new BluetoothKeyboard(this,
+            message -> handler.post(() -> { if (!destroyed) bluetoothStatus.setText(message); }));
+        if (Build.VERSION.SDK_INT >= 31 &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT},BLUETOOTH_PERMISSION_REQUEST);
+        } else bluetoothKeyboard.start();
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
+        super.onRequestPermissionsResult(requestCode,permissions,grants);
+        if (requestCode == BLUETOOTH_PERMISSION_REQUEST && bluetoothKeyboard != null) {
+            if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED)
+                bluetoothKeyboard.start();
+        }
     }
 
     private void probeCapabilities() {
