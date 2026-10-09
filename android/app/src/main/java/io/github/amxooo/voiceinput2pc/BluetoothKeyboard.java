@@ -35,12 +35,15 @@ public final class BluetoothKeyboard {
     private BluetoothAdapter adapter;
     private BluetoothHidDevice hid;
     private BluetoothDevice connected;
-    private boolean registered;
+    private volatile boolean registered;
+    private volatile boolean registrationPending;
     private volatile boolean closed;
     private final BluetoothHidDevice.Callback callback = new BluetoothHidDevice.Callback() {
         @Override public void onAppStatusChanged(BluetoothDevice pluggedDevice, boolean isRegistered) {
             registered = isRegistered;
-            report(isRegistered ? "蓝牙键盘已就绪，请选择已配对电脑" : "蓝牙键盘注册失败或已停用");
+            registrationPending = false;
+            if (!isRegistered) connected = null;
+            report(isRegistered ? "蓝牙键盘已就绪，请选择已配对电脑" : "蓝牙键盘未注册；返回应用后可重新初始化");
         }
         @Override public void onConnectionStateChanged(BluetoothDevice device, int state) {
             connected = state == BluetoothProfile.STATE_CONNECTED ? device : null;
@@ -62,26 +65,35 @@ public final class BluetoothKeyboard {
         BluetoothManager manager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = manager == null ? null : manager.getAdapter();
         if (adapter == null || !adapter.isEnabled()) { report("请先打开手机蓝牙"); return; }
-        if (hid != null) { report(registered ? "蓝牙键盘已就绪" : "正在注册蓝牙键盘"); return; }
+        if (hid != null) {
+            if (!registered && !registrationPending) registerHid();
+            else report(registered ? "蓝牙键盘已就绪" : "正在注册蓝牙键盘");
+            return;
+        }
         boolean requested = adapter.getProfileProxy(context, new BluetoothProfile.ServiceListener() {
             @Override public void onServiceConnected(int profile, BluetoothProfile proxy) {
                 if (closed) { adapter.closeProfileProxy(profile, proxy); return; }
                 hid = (BluetoothHidDevice) proxy;
-                BluetoothHidDeviceAppSdpRegister();
+                registerHid();
             }
             @Override public void onServiceDisconnected(int profile) {
-                hid = null; registered = false; connected = null;
+                hid = null; registered = false; registrationPending = false; connected = null;
                 report("蓝牙 HID 服务已断开");
             }
         }, BluetoothProfile.HID_DEVICE);
         report(requested ? "正在初始化蓝牙键盘" : "系统拒绝蓝牙 HID 服务");
     }
-    private void BluetoothHidDeviceAppSdpRegister() {
+    private void registerHid() {
+        if (closed || hid == null || registered || registrationPending) return;
+        registrationPending = true;
         android.bluetooth.BluetoothHidDeviceAppSdpSettings sdp =
             new android.bluetooth.BluetoothHidDeviceAppSdpSettings(
                 "手机万能输入法", "手机蓝牙键盘", "手机万能输入法", BluetoothHidDevice.SUBCLASS1_COMBO, DESCRIPTOR);
         boolean ok = hid.registerApp(sdp, null, null, executor, callback);
-        if (!ok) report("系统不允许注册蓝牙键盘");
+        if (!ok) {
+            registrationPending = false;
+            report("系统不允许注册蓝牙键盘，请保持应用前台后重试");
+        }
     }
     public List<BluetoothDevice> paired() {
         List<BluetoothDevice> result = new ArrayList<>();
@@ -166,7 +178,7 @@ public final class BluetoothKeyboard {
             try { hid.unregisterApp(); } catch (RuntimeException ignored) {}
             if (adapter != null) adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, hid);
         }
-        hid = null; connected = null; registered = false;
+        hid = null; connected = null; registered = false; registrationPending = false;
         executor.shutdown();
     }
 }
