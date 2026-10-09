@@ -78,7 +78,7 @@ class FirstRunDialog:
         self.completed = False
         addresses = detect_private_addresses()
         self.window = tk.Toplevel(root)
-        self.window.title('语音输入电脑 · 首次设置')
+        self.window.title('手机万能输入法 · 首次设置')
         self.window.resizable(False, False)
         self.window.protocol('WM_DELETE_WINDOW', self.window.destroy)
         if self.root.state() != 'withdrawn':
@@ -113,7 +113,7 @@ class FirstRunDialog:
             prepare_receiver(self.folder, host, port)
             set_autostart(self.autostart.get(), self.executable)
         except (OSError, ValueError) as exc:
-            messagebox.showerror('语音输入电脑', '设置未完成：' + str(exc), parent=self.window)
+            messagebox.showerror('手机万能输入法', '设置未完成：' + str(exc), parent=self.window)
             return
         self.completed = True
         self.window.destroy()
@@ -138,7 +138,7 @@ class PairingDialog:
                  on_regenerate=None):
         self.root = root
         self.window = tk.Toplevel(root)
-        self.window.title('语音输入电脑 · 配对手机')
+        self.window.title('手机万能输入法 · 配对手机')
         self.window.resizable(False, False)
         self.window.transient(root)
 
@@ -203,7 +203,7 @@ class PairingDialog:
         self.root.clipboard_clear()
         self.root.clipboard_append(self.view.uri)
         self.root.update_idletasks()
-        messagebox.showinfo('语音输入电脑', '完整配对码已复制。', parent=self.window)
+        messagebox.showinfo('手机万能输入法', '完整配对码已复制。', parent=self.window)
 
     def regenerate(self, callback):
         if not messagebox.askyesno(
