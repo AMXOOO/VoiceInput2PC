@@ -24,11 +24,16 @@ from cryptography.x509.oid import NameOID
 
 PAIRING_SCHEME = 'voiceinput2pc'
 PAIRING_HOST = 'pair'
-MAX_URI_LENGTH = 4096
+MAX_URI_LENGTH = 8192
 _HOST = re.compile(r'[A-Za-z0-9.-]+\Z')
 _TOKEN = re.compile(r'[A-Za-z0-9_-]{32,128}\Z')
 _FINGERPRINT = re.compile(r'[0-9a-f]{64}\Z')
+_TAILCAT_ADDRESS = re.compile(r'tc[A-Za-z0-9_-]{20,4094}\Z')
 DEFAULT_PORT = 23337
+TRANSPORT_LAN = 'lan_https'
+TRANSPORT_TAILCAT = 'tailcat'
+TRANSPORT_AUTO = 'auto'
+_DEVICE_ID = re.compile(r'[0-9a-f]{32}\Z')
 _TAILSCALE_RANGE = ipaddress.ip_network('100.64.0.0/10')
 
 
@@ -38,6 +43,9 @@ class Pairing:
     port: int
     token: str = field(repr=False)
     fingerprint: str = field(repr=False)
+    transport: str = TRANSPORT_LAN
+    tailcat_address: str = field(default='', repr=False)
+    device_id: str = ''
 
 
 def validate_pairing(value: Pairing) -> Pairing:
@@ -49,6 +57,19 @@ def validate_pairing(value: Pairing) -> Pairing:
         raise ValueError('invalid token')
     if not isinstance(value.fingerprint, str) or not _FINGERPRINT.fullmatch(value.fingerprint):
         raise ValueError('invalid fingerprint')
+    if value.transport not in (TRANSPORT_LAN, TRANSPORT_TAILCAT, TRANSPORT_AUTO):
+        raise ValueError('invalid transport')
+    address = value.tailcat_address or ''
+    if value.transport in (TRANSPORT_TAILCAT, TRANSPORT_AUTO):
+        if not _TAILCAT_ADDRESS.fullmatch(address):
+            raise ValueError('invalid tailcat address')
+    elif address:
+        raise ValueError('tailcat address is only valid for tailcat/auto transport')
+    if value.transport == TRANSPORT_AUTO:
+        if not isinstance(value.device_id, str) or not _DEVICE_ID.fullmatch(value.device_id):
+            raise ValueError('invalid device id')
+    elif value.device_id and not _DEVICE_ID.fullmatch(value.device_id):
+        raise ValueError('invalid device id')
     return value
 
 
@@ -78,7 +99,19 @@ def validate_port(port: int) -> int:
 
 def encode_pairing(value: Pairing) -> str:
     validate_pairing(value)
-    raw = f'1\n{value.host}\n{value.port}\n{value.token}\n{value.fingerprint}'.encode('utf-8')
+    if value.transport == TRANSPORT_AUTO:
+        raw = (
+            f'3\n{value.device_id}\n{value.host}\n{value.port}\n'
+            f'{value.token}\n{value.fingerprint}\n{value.tailcat_address}'
+        ).encode('utf-8')
+    elif value.transport == TRANSPORT_TAILCAT:
+        raw = (
+            f'2\n{TRANSPORT_TAILCAT}\n{value.host}\n{value.port}\n'
+            f'{value.token}\n{value.fingerprint}\n{value.tailcat_address}'
+        ).encode('utf-8')
+    else:
+        # Preserve the original payload exactly so v0.4.x Android clients keep pairing over LAN.
+        raw = f'1\n{value.host}\n{value.port}\n{value.token}\n{value.fingerprint}'.encode('utf-8')
     payload = base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
     return f'{PAIRING_SCHEME}://{PAIRING_HOST}?p={payload}'
 
@@ -99,15 +132,27 @@ def decode_pairing(uri: str) -> Pairing:
     except (binascii.Error, UnicodeError) as exc:
         raise ValueError('invalid pairing payload') from exc
     parts = raw.split('\n')
-    if len(parts) != 5 or parts[0] != '1':
-        raise ValueError('unsupported pairing payload')
+    if len(parts) == 5 and parts[0] == '1':
+        return validate_pairing(Pairing(parts[1], _decode_port(parts[2]), parts[3], parts[4]))
+    if len(parts) == 7 and parts[0] == '2' and parts[1] == TRANSPORT_TAILCAT:
+        return validate_pairing(Pairing(
+            parts[2], _decode_port(parts[3]), parts[4], parts[5],
+            transport=TRANSPORT_TAILCAT, tailcat_address=parts[6]))
+    if len(parts) == 7 and parts[0] == '3':
+        return validate_pairing(Pairing(
+            parts[2], _decode_port(parts[3]), parts[4], parts[5],
+            transport=TRANSPORT_AUTO, tailcat_address=parts[6], device_id=parts[1]))
+    raise ValueError('unsupported pairing payload')
+
+
+def _decode_port(raw: str) -> int:
     try:
-        port = int(parts[2])
+        port = int(raw)
     except ValueError as exc:
         raise ValueError('invalid port') from exc
-    if parts[2] != str(port):
+    if raw != str(port):
         raise ValueError('invalid port')
-    return validate_pairing(Pairing(parts[1], port, parts[3], parts[4]))
+    return port
 
 
 def _address_rank(address: ipaddress.IPv4Address) -> tuple[int, int]:
@@ -181,7 +226,11 @@ def load_pairing(folder: Path) -> Pairing:
     folder = Path(folder)
     try:
         config = json.loads((folder / 'config.json').read_text(encoding='utf-8'))
-        value = Pairing(config['host'], config['port'], config['token'], config['fingerprint'])
+        fingerprint = config['fingerprint']
+        device_id = config.get('device_id') or hashlib.sha256(
+            ('VoiceInput2PC:' + fingerprint).encode('ascii')).hexdigest()[:32]
+        value = Pairing(config['host'], config['port'], config['token'], fingerprint,
+                        device_id=device_id)
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError('receiver configuration is incomplete') from exc
     return validate_pairing(value)
@@ -193,14 +242,21 @@ def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
     selected_host = validate_host(host)
     selected_port = validate_port(port)
     config_path = folder / 'config.json'
+    existing_device_id = ''
+    if config_path.exists():
+        try:
+            existing_device_id = load_pairing(folder).device_id
+        except ValueError:
+            existing_device_id = ''
     if config_path.exists() and not regenerate:
         current = load_pairing(folder)
         if not (folder / 'cert.pem').is_file() or not (folder / 'key.pem').is_file():
             raise ValueError('existing certificate files are incomplete')
-        updated = Pairing(selected_host, selected_port, current.token, current.fingerprint)
+        updated = Pairing(selected_host, selected_port, current.token, current.fingerprint,
+                          device_id=current.device_id)
         data = json.dumps({
             'host': updated.host, 'port': updated.port, 'token': updated.token,
-            'fingerprint': updated.fingerprint,
+            'fingerprint': updated.fingerprint, 'device_id': updated.device_id,
         }, ensure_ascii=False, indent=2).encode('utf-8')
         _atomic_write(config_path, data)
         return updated
@@ -218,11 +274,13 @@ def prepare_receiver(folder: Path, host: str, port: int = DEFAULT_PORT,
             .add_extension(x509.SubjectAlternativeName(_subject_alt_names(selected_host)), critical=False)
             .sign(key, hashes.SHA256()))
     cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+    fingerprint = hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
+    device_id = existing_device_id or secrets.token_hex(16)
     value = Pairing(selected_host, selected_port, secrets.token_urlsafe(32),
-                    hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest())
+                    fingerprint, device_id=device_id)
     config_data = json.dumps({
         'host': value.host, 'port': value.port, 'token': value.token,
-        'fingerprint': value.fingerprint,
+        'fingerprint': value.fingerprint, 'device_id': value.device_id,
     }, ensure_ascii=False, indent=2).encode('utf-8')
     key_data = key.private_bytes(serialization.Encoding.PEM,
                                  serialization.PrivateFormat.PKCS8,

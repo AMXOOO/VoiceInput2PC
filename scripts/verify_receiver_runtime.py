@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 from receiver.pairing import prepare_receiver
 
 
-APP_TITLE = '语音输入电脑 · 电脑接收端'
+APP_TITLE = '手机万能输入法 · 电脑接收端'
 
 
 def load_user32():
@@ -139,21 +139,21 @@ def main():
             print('PASS: background startup stayed hidden, HTTPS was healthy, and manual launch revealed the window.')
         finally:
             if process.poll() is None:
-                process.terminate()
+                # The packaged receiver owns an embedded Tailcat child process.
+                # CI intentionally terminates the whole process tree so the
+                # extracted runtime directory is immediately removable.
+                subprocess.run(
+                    ['taskkill.exe', '/PID', str(process.pid), '/T', '/F'],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                )
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        subprocess.run(
-                            ['taskkill.exe', '/PID', str(process.pid), '/T', '/F'],
-                            check=False,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            timeout=10,
-                        )
+                    process.wait(timeout=5)
 
 
 if __name__ == '__main__':

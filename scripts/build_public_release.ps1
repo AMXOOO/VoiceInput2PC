@@ -87,6 +87,8 @@ try {
     }
 
     $python = Resolve-Python
+    Invoke-Checked $python @('scripts\fetch_tailcat.py')
+    Invoke-Checked $python @('scripts\\build_tailcat_android_bridge.py')
     $gradle = Resolve-Gradle
     if ([string]::IsNullOrWhiteSpace($env:JAVA_HOME)) { throw 'JAVA_HOME is required.' }
     $javac = Join-Path $env:JAVA_HOME 'bin\javac.exe'
@@ -125,7 +127,7 @@ try {
         throw 'Expected build outputs were not produced.'
     }
     $versionInfo = (Get-Item -LiteralPath $exe).VersionInfo
-    if ($versionInfo.FileVersion -ne '0.4.0.0' -or $versionInfo.ProductVersion -ne '0.4.0') {
+    if ($versionInfo.FileVersion -ne '0.5.0.0' -or $versionInfo.ProductVersion -ne '0.5.0') {
         throw "Unexpected executable version metadata: $($versionInfo.FileVersion) / $($versionInfo.ProductVersion)"
     }
     Invoke-Checked $python @('scripts\verify_first_run_ui.py', $exe)
@@ -141,6 +143,12 @@ try {
     if ($LASTEXITCODE -ne 0 -or ($apkEntries -match '(^|/)pairing\.json$')) {
         throw 'The Android APK contains a private pairing asset.'
     }
+    if (-not ($apkEntries -contains 'lib/arm64-v8a/libgojni.so')) {
+        throw 'The Android APK is missing the Tailcat Go bridge runtime.'
+    }
+    if ($apkEntries -contains 'lib/arm64-v8a/libtailcat.so') {
+        throw 'The Android APK still contains the superseded Tailcat CLI runtime.'
+    }
 
     $output = Join-Path $project 'release\output'
     $releaseRoot = (Resolve-Path (Join-Path $project 'release')).Path
@@ -153,8 +161,8 @@ try {
     if ([IO.Directory]::Exists($resolvedOutput)) { [IO.Directory]::Delete($resolvedOutput, $true) }
     [IO.Directory]::CreateDirectory($resolvedOutput) | Out-Null
 
-    $apkName = 'VoiceInput2PC-Android-v0.4.0.apk'
-    $zipName = 'VoiceInput2PC-Windows-v0.4.0.zip'
+    $apkName = 'VoiceInput2PC-Android-v0.5.0.apk'
+    $zipName = 'VoiceInput2PC-Windows-v0.5.0.zip'
     $sumName = 'SHA256SUMS.txt'
     $publicApk = Join-Path $resolvedOutput $apkName
     $publicZip = Join-Path $resolvedOutput $zipName
@@ -196,7 +204,8 @@ try {
         foreach ($required in @(
                 $packagedExe,
                 (Join-Path $verification '_internal\_tcl_data\init.tcl'),
-                (Join-Path $verification '使用说明.txt'))) {
+                (Join-Path $verification '使用说明.txt'),
+                (Join-Path $verification '_internal\tailcat\tailcat.exe'))) {
             if (-not (Test-Path -LiteralPath $required)) {
                 throw "Packaged Windows archive is missing: $required"
             }

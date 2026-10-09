@@ -1,0 +1,153 @@
+name: VoiceInput2PC CI
+
+on:
+  push:
+    branches:
+      - main
+      - feat/tailcat-transport-v0.5
+      - feat/file-transfer-v0.6
+      - feat/unified-connection-v0.6
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voiceinput2pc-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Build Tailcat Android Go bridge
+        run: python scripts/build_tailcat_android_bridge.py
+
+      - name: Install Python test dependencies
+        run: python -m pip install cryptography
+
+      - name: Cross-platform Python tests
+        run: >
+          python -m unittest
+          tests.test_pairing
+          tests.test_http
+          tests.test_file_transfer
+          tests.test_receiver
+          tests.test_sessions
+          tests.test_release_verification
+          -v
+
+      - name: Java pairing compatibility tests
+        run: |
+          mkdir -p tests/java-build
+          javac -encoding UTF-8 -d tests/java-build android/app/src/main/java/io/github/amxooo/voiceinput2pc/PairingConfig.java android/app/src/main/java/io/github/amxooo/voiceinput2pc/PairingCodec.java tests/PairingCodecTest.java
+          java -cp tests/java-build io.github.amxooo.voiceinput2pc.PairingCodecTest
+
+      - name: HID Unicode encoding unit tests
+        run: |
+          mkdir -p tests/hid-build
+          javac -encoding UTF-8 -d tests/hid-build android/app/src/main/java/io/github/amxooo/voiceinput2pc/HidTextEncoder.java tests/HidTextEncoderTest.java
+          java -cp tests/hid-build io.github.amxooo.voiceinput2pc.HidTextEncoderTest
+
+      - name: Build Android debug APK
+        run: gradle -p android :app:assembleDebug --no-daemon
+
+      - name: Verify Go bridge runtime
+        run: |
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/arm64-v8a/libgojni.so'
+          if unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'libtailcat.so'; then
+            echo "superseded Tailcat CLI runtime is still packaged" >&2
+            exit 1
+          fi
+
+      - name: Prepare Android candidate
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk VoiceInput2PC-v0.6.0-testing-Android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoiceInput2PC-Unified-Android-candidate
+          path: VoiceInput2PC-v0.6.0-testing-Android.apk
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create build environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+      - name: Build Windows candidate
+        shell: pwsh
+        run: .\scripts\build_windows_release.ps1
+
+      - name: Smoke-test embedded Tailcat from final Windows ZIP
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP 'voiceinput2pc-tailcat-smoke'
+          Expand-Archive -LiteralPath 'release/output/windows-v0.5.0/VoiceInput2PC-Windows-v0.5.0.zip' -DestinationPath $testRoot -Force
+          .\.venv\Scripts\python.exe scripts\verify_tailcat_runtime.py (Join-Path $testRoot '_internal\tailcat\tailcat.exe')
+
+      - name: Prepare Windows candidate
+        shell: pwsh
+        run: Copy-Item 'release/output/windows-v0.5.0/VoiceInput2PC-Windows-v0.5.0.zip' 'VoiceInput2PC-v0.6.0-testing-Windows.zip'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoiceInput2PC-Unified-Windows-candidate
+          path: VoiceInput2PC-v0.6.0-testing-Windows.zip
+          if-no-files-found: error
+
+  publish-testing:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/unified-connection-v0.6'
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: VoiceInput2PC-Unified-Android-candidate
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: VoiceInput2PC-Unified-Windows-candidate
+          path: dist
+
+      - name: Publish fixed testing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v0.6.0-testing"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG" "${GITHUB_SHA}"
+            git push origin "$TAG"
+            gh release create "$TAG" --prerelease --title "VoiceInput2PC v0.6 Testing" --notes "自动更新的 v0.6 真机测试版。不是正式版本。每次统一连接开发分支通过 Android、Windows 和协议测试后，这里的安装包会自动更新。"
+          fi
+          gh release upload "$TAG" dist/VoiceInput2PC-v0.6.0-testing-Android.apk dist/VoiceInput2PC-v0.6.0-testing-Windows.zip --clobber
+          gh release edit "$TAG" --prerelease --title "VoiceInput2PC v0.6 Testing" --notes "自动更新的 v0.6 真机测试版。不是正式版本。当前构建：${GITHUB_SHA}。Android 与 Windows 候选包均已通过 CI；用于同 Wi-Fi、Wi-Fi/5G 自动切换、文件断点续传和 Tailcat 真机验证。"

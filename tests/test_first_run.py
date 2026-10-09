@@ -37,6 +37,8 @@ class FirstRunTests(unittest.TestCase):
 
             self.assertEqual(first.token, second.token)
             self.assertEqual(first.fingerprint, second.fingerprint)
+            self.assertEqual(first.device_id, second.device_id)
+            self.assertRegex(second.device_id, r'^[0-9a-f]{32}$')
             self.assertEqual('192.168.1.21', second.host)
             self.assertEqual(24444, second.port)
             self.assertEqual(second, load_pairing(target))
@@ -44,6 +46,16 @@ class FirstRunTests(unittest.TestCase):
                 self.assertTrue((target / name).is_file(), name)
             self.assertNotIn(first.token, output.getvalue())
             self.assertNotIn(first.fingerprint, output.getvalue())
+
+    def test_regeneration_rotates_credentials_but_keeps_device_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / 'receiver'
+            first = prepare_receiver(target, '192.168.1.20', 23337)
+            second = prepare_receiver(target, '192.168.1.20', 23337, regenerate=True)
+
+            self.assertEqual(first.device_id, second.device_id)
+            self.assertNotEqual(first.token, second.token)
+            self.assertNotEqual(first.fingerprint, second.fingerprint)
 
     def test_failed_regeneration_preserves_existing_configuration(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -69,10 +81,26 @@ class FirstRunTests(unittest.TestCase):
             ['192.168.1.20', '10.0.0.8', '100.69.95.78'],
             detect_private_addresses(candidates))
 
+    def test_load_legacy_config_derives_stable_device_id(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)
+            fingerprint = 'ab' * 32
+            (target / 'config.json').write_text(json.dumps({
+                'host': '192.168.1.20',
+                'port': 23337,
+                'token': 'A' * 43,
+                'fingerprint': fingerprint,
+            }), encoding='utf-8')
+            loaded = load_pairing(target)
+            self.assertRegex(loaded.device_id, r'^[0-9a-f]{32}$')
+            loaded_again = load_pairing(target)
+            self.assertEqual(loaded.device_id, loaded_again.device_id)
+
     def test_load_pairing_rejects_incomplete_configuration(self):
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder)
-            (target / 'config.json').write_text(json.dumps({'host': 'pc.lan'}), encoding='utf-8')
+            (target / 'config.json').write_text(
+                json.dumps({'host': 'pc.lan'}), encoding='utf-8')
             with self.assertRaises(ValueError):
                 load_pairing(target)
 

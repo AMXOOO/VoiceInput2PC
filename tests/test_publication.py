@@ -16,13 +16,13 @@ class PublicIdentityTests(unittest.TestCase):
         desktop = (ROOT / 'receiver_app.py').read_text(encoding='utf-8')
 
         self.assertIn("applicationId 'io.github.amxooo.voiceinput2pc'", build)
-        self.assertIn('versionCode 4', build)
-        self.assertIn("versionName '0.4.0'", build)
+        self.assertIn('versionCode 5', build)
+        self.assertIn("versionName '0.5.0'", build)
         self.assertIn("rootProject.name = 'VoiceInput2PC'", settings)
-        self.assertIn('android:label="语音输入电脑"', manifest)
+        self.assertIn('android:label="手机万能输入法"', manifest)
         self.assertIn("'app': 'VoiceInput2PC'", server)
         self.assertIn("/ 'VoiceInput2PC'", desktop)
-        self.assertIn("APP_VERSION = '0.4.0'", desktop)
+        self.assertIn("APP_VERSION = '0.5.0'", desktop)
         self.assertNotIn('随手输入', desktop)
 
     def test_java_packages_use_public_namespace(self):
@@ -44,7 +44,7 @@ class PublicIdentityTests(unittest.TestCase):
         self.assertIn('exclude_binaries=True', spec)
         self.assertIn('coll = COLLECT(', spec)
         self.assertIn('upx=False', spec)
-        self.assertIn("StringStruct('ProductVersion', '0.4.0')", version)
+        self.assertIn("StringStruct('ProductVersion', '0.5.0')", version)
         self.assertIn("StringStruct('CompanyName', 'AMXOOO')", version)
 
     def test_public_documentation_explains_scope_and_safety(self):
@@ -54,11 +54,10 @@ class PublicIdentityTests(unittest.TestCase):
 
         readme = (ROOT / 'README.md').read_text(encoding='utf-8')
         for phrase in (
-                'VoiceInput2PC', '手机语音输入电脑', '安卓手机输入法',
+                'VoiceInput2PC', '手机万能输入法', '安卓手机输入法',
                 'Windows 当前光标', '下载成品', '不使用电脑麦克风',
                 '不占用剪贴板', '不会自动按回车', 'Android 8',
-                'Windows 10/11', 'VoiceInput2PC-Android-v0.4.0.apk',
-                'VoiceInput2PC-Windows-v0.4.0.zip',
+                'Windows 10/11', 'v0.5.0', '跨网络',
                 'https://github.com/AMXOOO/VoiceInput2PC/releases/latest',
                 '系统相机', 'SmartScreen', '安装未知应用', '专用网络',
                 '免安装便携版', '保留 `_internal` 文件夹',
@@ -105,8 +104,8 @@ class ReleaseBuildTests(unittest.TestCase):
         ignore = (ROOT / '.gitignore').read_text(encoding='utf-8')
         script = (ROOT / 'scripts/build_public_release.ps1').read_text(encoding='utf-8')
         self.assertIn('release/output/', ignore)
-        for name in ('VoiceInput2PC-Android-v0.4.0.apk',
-                     'VoiceInput2PC-Windows-v0.4.0.zip', 'SHA256SUMS.txt'):
+        for name in ('VoiceInput2PC-Android-v0.5.0.apk',
+                     'VoiceInput2PC-Windows-v0.5.0.zip', 'SHA256SUMS.txt'):
             self.assertIn(name, script)
         self.assertIn("dist\\VoiceInput2PCReceiver", script)
         self.assertIn('connectedDebugAndroidTest', script)

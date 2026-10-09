@@ -17,15 +17,17 @@ import pystray
 from PIL import Image, ImageDraw
 from receiver.core import Relay, InvalidMessage
 from receiver.http_server import make_server
+from receiver.file_transfer import FileTransferManager
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
+from receiver.tailcat import get_or_start, stop_all, TailcatUnavailable
 from receiver.win_input import type_text, capture_target, copy_text
 
 
-APP_VERSION = '0.4.0'
-APP_TITLE = '语音输入电脑 · 电脑接收端'
-FIRST_RUN_TITLE = '语音输入电脑 · 首次设置'
-PAIRING_TITLE = '语音输入电脑 · 配对手机'
+APP_VERSION = '0.5.0'
+APP_TITLE = '手机万能输入法 · 电脑接收端'
+FIRST_RUN_TITLE = '手机万能输入法 · 首次设置'
+PAIRING_TITLE = '手机万能输入法 · 配对手机'
 ERROR_ALREADY_EXISTS = 183
 SW_RESTORE = 9
 
@@ -146,9 +148,10 @@ def main():
         port = current_pairing.port
         stage = '打开本机消息记录'
         relay = Relay(folder / 'messages.db', type_text, target_provider=capture_target)
+        file_manager = FileTransferManager(folder)
         stage = '启动监听'
         server = make_server(('0.0.0.0', current_pairing.port), relay, current_pairing.token,
-                             folder / 'cert.pem', folder / 'key.pem')
+                             folder / 'cert.pem', folder / 'key.pem', file_manager=file_manager)
     except Exception as exc:
         detail = startup_error_message(exc, stage, folder, port)
         try:
@@ -157,7 +160,7 @@ def main():
                 'stage': stage, 'detail': detail}, ensure_ascii=False), encoding='utf-8')
         except OSError:
             pass
-        messagebox.showerror('语音输入电脑', detail)
+        messagebox.showerror('手机万能输入法', detail)
         root.destroy()
         kernel.CloseHandle(mutex)
         return
@@ -169,15 +172,15 @@ def main():
     for y in (25, 34):
         for x in (19, 29, 39):
             draw.rectangle((x, y, x+4, y+3), fill='white')
-    icon = pystray.Icon('VoiceInput2PC', image, '语音输入电脑 · 正在接收文字', menu=pystray.Menu(
+    icon = pystray.Icon('VoiceInput2PC', image, '手机万能输入法 · 正在接收文字', menu=pystray.Menu(
         pystray.MenuItem('查看状态和最近文字', lambda *_: commands.put('show'), default=True),
         pystray.MenuItem('暂停自动输入', lambda *_: commands.put('pause'), checked=lambda _: relay.paused),
         pystray.MenuItem('退出', lambda *_: commands.put('exit'))))
 
     container = ttk.Frame(root, padding=18)
     container.pack(fill='both', expand=True)
-    ttk.Label(container, text='语音输入电脑', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
-    status = ttk.Label(container, text='正在接收 · 手机与电脑连接同一局域网')
+    ttk.Label(container, text='手机万能输入法', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
+    status = ttk.Label(container, text='正在接收 · 手机可通过局域网或跨网络安全连接')
     status.pack(anchor='w', pady=(6, 4))
     ttk.Label(container, text='电脑点中输入位置 → 手机开始输入 → 使用手机输入法的语音按钮。').pack(anchor='w')
     ttk.Label(container, text='无需逐条发送；不按回车、不改剪贴板。切换输入位置前请先暂停。').pack(anchor='w')
@@ -202,7 +205,7 @@ def main():
         if rows:
             listing.selection_set(0)
             select()
-        status.config(text='已暂停自动输入 · 新文字仍会保存' if relay.paused else '正在接收 · 手机与电脑连接同一局域网')
+        status.config(text='已暂停自动输入 · 新文字仍会保存' if relay.paused else '正在接收 · 手机可通过局域网或跨网络安全连接')
 
     def select(*_):
         sel = listing.curselection()
@@ -242,23 +245,30 @@ def main():
                 folder, current_pairing.host, current_pairing.port, regenerate=True)
             port = current_pairing.port
             server = make_server(('0.0.0.0', current_pairing.port), relay,
-                                 current_pairing.token, folder / 'cert.pem', folder / 'key.pem')
+                                 current_pairing.token, folder / 'cert.pem', folder / 'key.pem',
+                                 file_manager=file_manager)
             threading.Thread(target=server.serve_forever, daemon=True).start()
         except Exception as exc:
             detail = startup_error_message(exc, '更换配对码', folder, port)
             status.config(text='更换配对码失败，请退出后重新打开接收端')
-            messagebox.showerror('语音输入电脑', detail, parent=root)
+            messagebox.showerror('手机万能输入法', detail, parent=root)
             return
         finally:
             relay.paused = previous_pause
             icon.update_menu()
         refresh()
-        show_pairing(root, current_pairing, allow_regenerate=True,
-                     on_regenerate=regenerate_pairing)
+        open_pairing()
 
     def open_pairing():
-        show_pairing(root, current_pairing, allow_regenerate=True,
-                     on_regenerate=regenerate_pairing)
+        try:
+            show_pairing(root, current_pairing, allow_regenerate=True,
+                         on_regenerate=regenerate_pairing)
+        except RuntimeError as exc:
+            messagebox.showerror(
+                '手机万能输入法',
+                '暂时无法生成自动配对码：' + str(exc)
+                + '\n\n电脑接收端仍在运行，局域网输入不受影响。',
+                parent=root)
 
     def handle_command(command):
         if command == 'show':
@@ -272,6 +282,7 @@ def main():
             refresh()
         elif command == 'exit':
             icon.stop()
+            stop_all()
             threading.Thread(target=server.shutdown, daemon=True).start()
             root.destroy()
             return False
@@ -282,13 +293,23 @@ def main():
                       lambda exc: status.config(text='界面操作暂未成功，可在托盘重试或退出'))
 
     threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    # Keep the stable cross-network endpoint alive for already-paired phones.
+    # This is intentionally background/non-fatal: LAN input must still work if
+    # the remote transport cannot start on a restricted network.
+    def warm_remote_transport():
+        try:
+            get_or_start(current_pairing.port)
+        except (OSError, TailcatUnavailable):
+            pass
+
+    threading.Thread(target=warm_remote_transport, daemon=True,
+                     name='voiceinput2pc-remote-transport').start()
     threading.Thread(target=icon.run, daemon=True).start()
     if should_show_main_window(args.background, args.show, first_setup):
         commands.put('show')
     if first_setup:
-        root.after(250, lambda: show_pairing(
-            root, current_pairing, allow_regenerate=True,
-            on_regenerate=regenerate_pairing))
+        root.after(250, open_pairing)
     try:
         Path(args.diagnostic_report).write_text(json.dumps({
             'time': datetime.datetime.now().isoformat(), 'ok': True,
@@ -297,6 +318,7 @@ def main():
         pass
     poll()
     root.mainloop()
+    stop_all()
     server.server_close()
     kernel.CloseHandle(mutex)
 

@@ -1,9 +1,15 @@
 package io.github.amxooo.voiceinput2pc;
 
 import android.app.Activity;
+import android.Manifest;
+import android.bluetooth.BluetoothDevice;
+import android.os.Build;
+import android.content.pm.PackageManager;
+import android.provider.Settings;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -26,8 +32,10 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private CommitEditText editor;
+    private BluetoothKeyboard bluetoothKeyboard;
+    private static final int BLUETOOTH_PERMISSION_REQUEST = 2607;
     private TextView status, destination, counter;
-    private Button start, fresh, retry, receive;
+    private Button start, fresh, retry, receive, sendFile;
     private Button pairingButton;
     private EditText pairingInput;
     private SharedPreferences prefs;
@@ -36,9 +44,11 @@ public class MainActivity extends Activity {
     private CommitTracker tracker;
     private String host, receiveQueueHost, legacyPendingRaw = "";
     private boolean busy, loading, destroyed, resumed, storageBlocked, sendingText, receiveQueued;
+    private boolean fileTransferSupported;
     private int activationEpoch, receiveQueueEpoch = -1;
     private final int green = Color.rgb(22,112,91);
     private final Runnable flush = this::transmitCommitted;
+    private static final int PICK_FILE_REQUEST = 2606;
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private TextView label(String text, int size, int color) {
@@ -118,6 +128,10 @@ public class MainActivity extends Activity {
         pairingButton.setBackgroundTintList(ColorStateList.valueOf(green));
         pairingButton.setOnClickListener(v -> importPairing(pairingInput.getText().toString().trim()));
         layout.addView(pairingButton, row(58));
+        Button bluetoothEntry = new Button(this);
+        bluetoothEntry.setText("蓝牙免安装输入（无需电脑端）");
+        bluetoothEntry.setOnClickListener(v -> showBluetoothScreen());
+        layout.addView(bluetoothEntry, row(52));
         TextView safety = label("配对码相当于连接密码，只在自己的手机和电脑之间使用。应用不需要麦克风或相机权限。",
                 12, Color.GRAY);
         safety.setPadding(0, dp(12), 0, 0);
@@ -137,7 +151,7 @@ public class MainActivity extends Activity {
         say("正在核对电脑身份和连接凭据…", false);
         worker.execute(() -> {
             try {
-                RelayTransport candidateClient = new RelayClient(candidate);
+                RelayTransport candidateClient = createTransport(candidate);
                 JSONObject result = candidateClient.request(candidate.host, null);
                 if (!Boolean.TRUE.equals(result.opt("ok"))
                         || !"VoiceInput2PC".equals(result.optString("app"))
@@ -153,26 +167,53 @@ public class MainActivity extends Activity {
                     }
                     client = candidateClient;
                     showTypingScreen(candidate);
+                    fileTransferSupported = hasFeature(result, "file-upload-v1");
+                    updateControls();
+                    String routeNote = routeNote(candidateClient);
                     say(result.optBoolean("paused")
-                            ? "已连接 · 请先在电脑启用输入，再选中输入框"
-                            : "已连接 · 先选中电脑输入框，再点开始", false);
+                            ? "已连接" + routeNote + " · 请先在电脑启用输入，再选中输入框"
+                            : "已连接" + routeNote + " · 先选中电脑输入框，再点开始", false);
                 });
             } catch (Exception failure) {
+                final String detail = pairingFailureText(failure);
                 handler.post(() -> {
                     if (destroyed || pairingButton == null) return;
                     pairingButton.setEnabled(true);
-                    say("没有通过电脑验证。请确认接收端已启动，再重新扫描；原有连接没有改变。", true);
+                    say(detail, true);
                 });
             }
         });
     }
 
+    private RelayTransport createTransport(PairingConfig pairing) throws Exception {
+        return pairing.isAuto() ? new ConnectionManager(this, pairing) : new RelayClient(this, pairing);
+    }
+
+    private String routeNote(RelayTransport transport) {
+        if (!(transport instanceof ConnectionManager)) return "";
+        String mode = ((ConnectionManager) transport).activeMode();
+        if ("lan".equals(mode)) return " · 本地直连";
+        if ("tailcat".equals(mode)) return " · 远程连接";
+        return "";
+    }
+
+    private String pairingFailureText(Exception failure) {
+        String message = failure == null ? "" : failure.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            message = failure == null ? "未知错误" : failure.getClass().getSimpleName();
+        }
+        message = message.replaceAll("tc[A-Za-z0-9_-]{20,4094}", "tc<redacted>");
+        if (message.length() > 360) message = message.substring(0, 360);
+        return "连接失败 · " + message;
+    }
+
     private void showTypingScreen(PairingConfig pairing) {
         clearQueuedReceive();
-        setTitle("语音输入电脑");
+        fileTransferSupported = false;
+        setTitle("手机万能输入法");
         try {
             host = prefs.getString("host", pairing.host);
-            client = new RelayClient(pairing);
+            client = createTransport(pairing);
         } catch (Exception invalid) {
             showPairingScreen("保存的连接配置无法使用，请重新配对。");
             return;
@@ -202,9 +243,11 @@ public class MainActivity extends Activity {
             view.setPadding(dp(20), insets.getSystemWindowInsetTop()+dp(12), dp(20), insets.getSystemWindowInsetBottom()+dp(8));
             return insets;
         });
-        TextView title = label("语音输入电脑",28,Color.rgb(31,48,43));
+        TextView title = label("手机万能输入法",28,Color.rgb(31,48,43));
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); layout.addView(title,row(-2));
-        destination = label("电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
+        destination = label(pairing.isAuto()
+                ? "这台电脑 · 自动连接 · 更换 ›"
+                : "电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
         destination.setPadding(0,dp(6),0,dp(10));
         destination.setOnClickListener(v -> {
             if (busy || tracker.pending() != null) {
@@ -244,19 +287,159 @@ public class MainActivity extends Activity {
         startParams.leftMargin=dp(8); actions.addView(start,startParams);
         LinearLayout.LayoutParams receiveParams = new LinearLayout.LayoutParams(0,dp(58),1);
         receiveParams.leftMargin=dp(8); actions.addView(receive,receiveParams); layout.addView(actions,row(-2));
-        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。换电脑窗口后请重新开始。换行、回车、Tab 会转为空格。",12,Color.GRAY);
+        sendFile = new Button(this); sendFile.setText("发送文件到电脑");
+        LinearLayout.LayoutParams fileParams = row(52); fileParams.topMargin = dp(8);
+        layout.addView(sendFile, fileParams);
+        Button bluetoothEntry = new Button(this);
+        bluetoothEntry.setText("蓝牙免安装输入");
+        bluetoothEntry.setOnClickListener(v -> { pauseLocal(); save(); showBluetoothScreen(); });
+        layout.addView(bluetoothEntry, row(52));
+        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。文件发送支持单文件 ≤ 200MB，保存到电脑 Downloads/VoiceInput2PC。",12,Color.GRAY);
         hint.setPadding(0,dp(8),0,dp(2)); layout.addView(hint,row(-2));
         setContentView(layout);
         loading=true; editor.setText(draft); editor.setSelection(editor.length()); loading=false;
         editor.setEditObserver(this::edited);
         start.setOnClickListener(v -> toggleStart()); fresh.setOnClickListener(v -> newDraft());
         receive.setOnClickListener(v -> receiveFromComputer());
+        sendFile.setOnClickListener(v -> chooseFile());
         updateControls();
         if (pending != null) uncertainHint();
         else if (tracker.isSaved()) say("电脑只保存了文字，未自动输入。点“保留并重置”核对后恢复。",true);
         else if (tracker.hasConflict()) say("已输入部分发生修改。电脑原文不会改动，请保留并重置。",true);
         else if (!draft.isEmpty()) say("草稿已恢复，当前暂停。点开始前请核对电脑已有文字。",false);
         else health();
+        probeCapabilities();
+    }
+
+    private void showBluetoothScreen() {
+        setTitle("手机万能输入法 · 蓝牙");
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(20),dp(22),dp(20),dp(18));
+        layout.setBackgroundColor(Color.rgb(247,248,244));
+        TextView heading = label("蓝牙免安装输入",25,green);
+        heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        layout.addView(heading,row(-2));
+        TextView guide = label("电脑不需要安装接收端。先在系统蓝牙设置中配对电脑，然后返回选择设备。当前仅支持英文、数字和 ASCII 符号；中文不会被错误转写成拼音。",14,Color.DKGRAY);
+        guide.setPadding(0,dp(10),0,dp(10));
+        layout.addView(guide,row(-2));
+        TextView bluetoothStatus = label("尚未初始化蓝牙键盘",14,green);
+        layout.addView(bluetoothStatus,row(-2));
+        EditText input = new EditText(this);
+        input.setHint("使用手机输入法输入或语音转写英文文字");
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setMinLines(3);
+        layout.addView(input,new LinearLayout.LayoutParams(-1,0,1));
+        Button pair = new Button(this); pair.setText("打开系统蓝牙配对");
+        pair.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
+        layout.addView(pair,row(50));
+        Button retryBluetooth = new Button(this); retryBluetooth.setText("重新初始化蓝牙键盘");
+        retryBluetooth.setOnClickListener(v -> { if (bluetoothKeyboard != null) bluetoothKeyboard.start(); });
+        layout.addView(retryBluetooth,row(48));
+        Button devices = new Button(this); devices.setText("选择已配对电脑");
+        devices.setOnClickListener(v -> {
+            if (bluetoothKeyboard == null) { bluetoothStatus.setText("蓝牙尚未初始化"); return; }
+            java.util.List<BluetoothDevice> paired = bluetoothKeyboard.paired();
+            if (paired.isEmpty()) { bluetoothStatus.setText("没有已配对设备，请先在系统蓝牙设置中配对"); return; }
+            String[] names = new String[paired.size()];
+            for (int i=0;i<paired.size();i++) names[i]=BluetoothKeyboard.safeName(paired.get(i));
+            new AlertDialog.Builder(this).setTitle("选择电脑蓝牙设备")
+                .setItems(names,(dialog,which)->bluetoothKeyboard.connect(paired.get(which))).show();
+        });
+        layout.addView(devices,row(50));
+        final HidTextEncoder.Mode[] selectedMode = {HidTextEncoder.Mode.ASCII};
+        Spinner inputMode = new Spinner(this);
+        String[] modeLabels = {
+            "标准蓝牙键盘（英文与符号）",
+            "Microsoft Word（Alt+X 中文输入）",
+            "Linux GTK（Ctrl+Shift+U 中文输入）"
+        };
+        ArrayAdapter<String> modeAdapter = new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_item, modeLabels);
+        modeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        inputMode.setAdapter(modeAdapter);
+        inputMode.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                selectedMode[0] = position == 1 ? HidTextEncoder.Mode.WORD_ALT_X :
+                    position == 2 ? HidTextEncoder.Mode.LINUX_GTK : HidTextEncoder.Mode.ASCII;
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+        layout.addView(inputMode,row(52));
+        Button send = new Button(this); send.setText("将文字输入电脑");
+        send.setOnClickListener(v -> {
+            if (bluetoothKeyboard == null) { bluetoothStatus.setText("蓝牙尚未初始化"); return; }
+            String value=input.getText().toString();
+            final HidTextEncoder.Mode mode=selectedMode[0];
+            try { HidTextEncoder.encode(value,mode); }
+            catch (IllegalArgumentException invalid) { bluetoothStatus.setText(invalid.getMessage()); return; }
+            String warning = mode == HidTextEncoder.Mode.WORD_ALT_X
+                ? "仅适用于支持 Alt+X 的 Word 等编辑器，不适用于任意 Windows 输入框。"
+                : mode == HidTextEncoder.Mode.LINUX_GTK
+                    ? "仅适用于支持 Ctrl+Shift+U 的 Linux GTK 输入框。"
+                    : "仅支持美国键盘布局下的英文、数字和 ASCII 符号。";
+            new AlertDialog.Builder(this).setTitle("确认蓝牙输入")
+                .setMessage(warning + "\\n请先选中目标输入框。转换可能因输入法或布局而失败，请核对实际文字。")
+                .setNegativeButton("取消",null)
+                .setPositiveButton("发送",(dialog,which)->bluetoothKeyboard.send(value,mode)).show();
+        });
+        layout.addView(send,row(54));
+        Button back = new Button(this); back.setText("返回");
+        back.setOnClickListener(v -> {
+            if (bluetoothKeyboard != null) { bluetoothKeyboard.close(); bluetoothKeyboard=null; }
+            PairingConfig pairing = PairingStore.load(prefs);
+            if (pairing == null) showPairingScreen("请连接电脑接收端，或选择蓝牙免安装输入。");
+            else showTypingScreen(pairing);
+        });
+        layout.addView(back,row(48));
+        setContentView(layout);
+        if (bluetoothKeyboard != null) bluetoothKeyboard.close();
+        bluetoothKeyboard = new BluetoothKeyboard(this,
+            message -> handler.post(() -> { if (!destroyed) bluetoothStatus.setText(message); }));
+        if (Build.VERSION.SDK_INT >= 31 &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT},BLUETOOTH_PERMISSION_REQUEST);
+        } else bluetoothKeyboard.start();
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
+        super.onRequestPermissionsResult(requestCode,permissions,grants);
+        if (requestCode == BLUETOOTH_PERMISSION_REQUEST && bluetoothKeyboard != null) {
+            if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED)
+                bluetoothKeyboard.start();
+        }
+    }
+
+    private void probeCapabilities() {
+        final RelayTransport probeClient = client;
+        final String address = host;
+        worker.execute(() -> {
+            try {
+                JSONObject result = probeClient.request(address, null);
+                final boolean supported = Boolean.TRUE.equals(result.opt("ok"))
+                        && hasFeature(result, "file-upload-v1");
+                handler.post(() -> {
+                    if (destroyed || probeClient != client || !address.equals(host)) return;
+                    fileTransferSupported = supported;
+                    updateControls();
+                });
+            } catch (Exception ignored) {
+                handler.post(() -> {
+                    if (destroyed || probeClient != client || !address.equals(host)) return;
+                    fileTransferSupported = false;
+                    updateControls();
+                });
+            }
+        });
+    }
+
+    private boolean hasFeature(JSONObject result, String feature) {
+        org.json.JSONArray features = result.optJSONArray("features");
+        if (features == null) return false;
+        for (int i = 0; i < features.length(); i++) {
+            if (feature.equals(features.optString(i))) return true;
+        }
+        return false;
     }
 
     private boolean save() {
@@ -290,6 +473,7 @@ public class MainActivity extends Activity {
             || (sendingText && !receiveQueued && cleanForReceive && tracker.pending() != null));
         retry.setVisibility(tracker.pending() != null && !tracker.pending().session.isEmpty() ? View.VISIBLE : View.GONE);
         retry.setEnabled(!busy);
+        if (sendFile != null) sendFile.setEnabled(!busy && resumed && fileTransferSupported);
         counter.setText("电脑已接收输入 " + tracker.sent().codePointCount(0,tracker.sent().length())
             + " 字 · 本地草稿 " + tracker.draft().codePointCount(0,tracker.draft().length()) + " 字");
         if (tracker.isActive() && resumed) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -526,6 +710,98 @@ public class MainActivity extends Activity {
         }
         return true;
     }
+    private void chooseFile() {
+        if (busy || destroyed || !resumed) return;
+        if (tracker != null && tracker.isActive()) {
+            pauseLocal();
+            save();
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, PICK_FILE_REQUEST);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_FILE_REQUEST || resultCode != RESULT_OK
+                || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        try {
+            int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            getContentResolver().takePersistableUriPermission(uri, flags);
+        } catch (Exception ignored) {
+        }
+        sendSelectedFile(uri);
+    }
+
+    private void sendSelectedFile(Uri uri) {
+        if (busy || destroyed) return;
+        busy = true;
+        updateControls();
+        say("正在读取文件并计算 SHA-256…", false);
+        final String address = host;
+        final RelayTransport transferClient = client;
+        worker.execute(() -> {
+            try {
+                AndroidFileTransfer.Metadata metadata = AndroidFileTransfer.inspect(
+                        getContentResolver(), uri, (done, total) -> {
+                            if (done == 0) return;
+                            final long mb = done / (1024 * 1024);
+                            handler.post(() -> {
+                                if (!destroyed) say("正在校验文件 · 已读取 " + mb + " MB", false);
+                            });
+                        });
+                handler.post(() -> {
+                    if (!destroyed) say("准备发送 " + metadata.name + " · "
+                            + formatBytes(metadata.size), false);
+                });
+                JSONObject result = AndroidFileTransfer.upload(
+                        getContentResolver(), uri, metadata, transferClient, address,
+                        (sent, total) -> {
+                            final int percent = total <= 0 ? 0 : (int)Math.min(100, sent * 100 / total);
+                            handler.post(() -> {
+                                if (!destroyed) say("正在发送 " + metadata.name + " · " + percent + "%", false);
+                            });
+                        });
+                String savedName = result.optString("name", metadata.name);
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy = false;
+                    updateControls();
+                    say("文件已发送到电脑 · " + savedName, false);
+                });
+            } catch (Exception error) {
+                final String detail = safeFileError(error);
+                handler.post(() -> {
+                    if (destroyed) return;
+                    busy = false;
+                    updateControls();
+                    say("文件发送失败 · " + detail + " · 可重新选择同一文件续传", true);
+                });
+            }
+        });
+    }
+
+    private String safeFileError(Exception error) {
+        String message = error == null ? "" : error.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            message = error == null ? "未知错误" : error.getClass().getSimpleName();
+        }
+        message = message.replaceAll("tc[A-Za-z0-9_-]{20,4094}", "tc<redacted>");
+        return message.length() > 220 ? message.substring(0, 220) : message;
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes >= 1024L * 1024L) {
+            return String.format(java.util.Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+        }
+        if (bytes >= 1024L) {
+            return String.format(java.util.Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        }
+        return bytes + " B";
+    }
+
     private void newDraft() {
         if (busy || destroyed) return;
         pauseLocal();
@@ -564,9 +840,14 @@ public class MainActivity extends Activity {
                 JSONObject result=client.request(address,null);
                 handler.post(() -> {
                     if (destroyed || busy || tracker.isActive() || tracker.pending()!=null || tracker.isSaved() || tracker.hasConflict()) return;
-                    if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2)
+                    if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2) {
                         say("电脑接收端需要更新到远程键盘版本。",true);
-                    else say(result.optBoolean("paused") ? "已连接 · 请先在电脑启用输入，再选中输入框" : "已连接 · 先选中电脑输入框，再点开始",false);
+                    } else {
+                        fileTransferSupported = hasFeature(result, "file-upload-v1");
+                        updateControls();
+                        String routeNote = routeNote(client);
+                        say(result.optBoolean("paused") ? "已连接" + routeNote + " · 请先在电脑启用输入，再选中输入框" : "已连接" + routeNote + " · 先选中电脑输入框，再点开始",false);
+                    }
                 });
             } catch(Exception e) {
                 handler.post(() -> {
@@ -576,7 +857,11 @@ public class MainActivity extends Activity {
             }
         });
     }
-    @Override public void onResume() { super.onResume(); resumed=true; if(tracker!=null) updateControls(); }
+    @Override public void onResume() {
+        super.onResume(); resumed=true;
+        if (tracker!=null) updateControls();
+        if (bluetoothKeyboard != null && bluetoothKeyboard.hasPermission()) bluetoothKeyboard.start();
+    }
     @Override public void onPause() {
         resumed=false;
         clearQueuedReceive();
@@ -584,6 +869,6 @@ public class MainActivity extends Activity {
         super.onPause();
     }
     @Override public void onDestroy() {
-        destroyed=true; clearQueuedReceive(); handler.removeCallbacksAndMessages(null); worker.shutdown(); super.onDestroy();
+        destroyed=true; clearQueuedReceive(); if (bluetoothKeyboard != null) bluetoothKeyboard.close(); handler.removeCallbacksAndMessages(null); worker.shutdown(); super.onDestroy();
     }
 }
