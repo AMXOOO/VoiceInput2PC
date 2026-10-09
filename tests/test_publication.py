@@ -54,7 +54,7 @@ class PublicIdentityTests(unittest.TestCase):
 
         readme = (ROOT / 'README.md').read_text(encoding='utf-8')
         for phrase in (
-                'VoiceInput2PC', '手机语音输入电脑', '安卓手机输入法',
+                'VoiceInput2PC', '手机万能输入法', '安卓手机输入法',
                 'Windows 当前光标', '下载成品', '不使用电脑麦克风',
                 '不占用剪贴板', '不会自动按回车', 'Android 8',
                 'Windows 10/11', 'v0.5.0', '跨网络',
