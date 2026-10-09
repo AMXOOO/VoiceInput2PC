@@ -25,9 +25,9 @@ from receiver.win_input import type_text, capture_target, copy_text
 
 
 APP_VERSION = '0.5.0'
-APP_TITLE = '语音输入电脑 · 电脑接收端'
-FIRST_RUN_TITLE = '语音输入电脑 · 首次设置'
-PAIRING_TITLE = '语音输入电脑 · 配对手机'
+APP_TITLE = '手机万能输入法 · 电脑接收端'
+FIRST_RUN_TITLE = '手机万能输入法 · 首次设置'
+PAIRING_TITLE = '手机万能输入法 · 配对手机'
 ERROR_ALREADY_EXISTS = 183
 SW_RESTORE = 9
 
@@ -160,7 +160,7 @@ def main():
                 'stage': stage, 'detail': detail}, ensure_ascii=False), encoding='utf-8')
         except OSError:
             pass
-        messagebox.showerror('语音输入电脑', detail)
+        messagebox.showerror('手机万能输入法', detail)
         root.destroy()
         kernel.CloseHandle(mutex)
         return
@@ -172,14 +172,14 @@ def main():
     for y in (25, 34):
         for x in (19, 29, 39):
             draw.rectangle((x, y, x+4, y+3), fill='white')
-    icon = pystray.Icon('VoiceInput2PC', image, '语音输入电脑 · 正在接收文字', menu=pystray.Menu(
+    icon = pystray.Icon('VoiceInput2PC', image, '手机万能输入法 · 正在接收文字', menu=pystray.Menu(
         pystray.MenuItem('查看状态和最近文字', lambda *_: commands.put('show'), default=True),
         pystray.MenuItem('暂停自动输入', lambda *_: commands.put('pause'), checked=lambda _: relay.paused),
         pystray.MenuItem('退出', lambda *_: commands.put('exit'))))
 
     container = ttk.Frame(root, padding=18)
     container.pack(fill='both', expand=True)
-    ttk.Label(container, text='语音输入电脑', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
+    ttk.Label(container, text='手机万能输入法', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
     status = ttk.Label(container, text='正在接收 · 手机可通过局域网或跨网络安全连接')
     status.pack(anchor='w', pady=(6, 4))
     ttk.Label(container, text='电脑点中输入位置 → 手机开始输入 → 使用手机输入法的语音按钮。').pack(anchor='w')
@@ -251,7 +251,7 @@ def main():
         except Exception as exc:
             detail = startup_error_message(exc, '更换配对码', folder, port)
             status.config(text='更换配对码失败，请退出后重新打开接收端')
-            messagebox.showerror('语音输入电脑', detail, parent=root)
+            messagebox.showerror('手机万能输入法', detail, parent=root)
             return
         finally:
             relay.paused = previous_pause
@@ -265,7 +265,7 @@ def main():
                          on_regenerate=regenerate_pairing)
         except RuntimeError as exc:
             messagebox.showerror(
-                '语音输入电脑',
+                '手机万能输入法',
                 '暂时无法生成自动配对码：' + str(exc)
                 + '\n\n电脑接收端仍在运行，局域网输入不受影响。',
                 parent=root)
