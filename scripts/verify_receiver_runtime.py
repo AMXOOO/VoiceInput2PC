@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 from receiver.pairing import prepare_receiver
 
 
-APP_TITLE = '语音输入电脑 · 电脑接收端'
+APP_TITLE = '手机万能输入法 · 电脑接收端'
 
 
 def load_user32():
