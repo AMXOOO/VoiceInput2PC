@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:label="语音输入电脑" android:icon="@drawable/ic_launcher"
+        android:label="手机万能输入法" android:icon="@drawable/ic_launcher"
         android:allowBackup="false" android:usesCleartextTraffic="false"
         android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true"
