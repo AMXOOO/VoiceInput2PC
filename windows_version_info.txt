@@ -14,12 +14,12 @@ VSVersionInfo(
       StringTable(
         '080404B0',
         [StringStruct('CompanyName', 'AMXOOO'),
-         StringStruct('FileDescription', 'VoiceInput2PC Windows Receiver'),
+         StringStruct('FileDescription', '手机万能输入法 · Windows 接收端'),
          StringStruct('FileVersion', '0.4.0.0'),
          StringStruct('InternalName', 'VoiceInput2PCReceiver'),
          StringStruct('LegalCopyright', 'Copyright (c) 2026 AMXOOO'),
          StringStruct('OriginalFilename', 'VoiceInput2PCReceiver.exe'),
-         StringStruct('ProductName', 'VoiceInput2PC'),
+         StringStruct('ProductName', '手机万能输入法'),
          StringStruct('ProductVersion', '0.4.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])

@@ -19,7 +19,7 @@ class PublicIdentityTests(unittest.TestCase):
         self.assertIn('versionCode 4', build)
         self.assertIn("versionName '0.4.0'", build)
         self.assertIn("rootProject.name = 'VoiceInput2PC'", settings)
-        self.assertIn('android:label="语音输入电脑"', manifest)
+        self.assertIn('android:label="手机万能输入法"', manifest)
         self.assertIn("'app': 'VoiceInput2PC'", server)
         self.assertIn("/ 'VoiceInput2PC'", desktop)
         self.assertIn("APP_VERSION = '0.4.0'", desktop)

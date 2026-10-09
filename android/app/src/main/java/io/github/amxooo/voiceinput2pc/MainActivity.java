@@ -169,7 +169,7 @@ public class MainActivity extends Activity {
 
     private void showTypingScreen(PairingConfig pairing) {
         clearQueuedReceive();
-        setTitle("语音输入电脑");
+        setTitle("手机万能输入法");
         try {
             host = prefs.getString("host", pairing.host);
             client = new RelayClient(pairing);
@@ -202,7 +202,7 @@ public class MainActivity extends Activity {
             view.setPadding(dp(20), insets.getSystemWindowInsetTop()+dp(12), dp(20), insets.getSystemWindowInsetBottom()+dp(8));
             return insets;
         });
-        TextView title = label("语音输入电脑",28,Color.rgb(31,48,43));
+        TextView title = label("手机万能输入法",28,Color.rgb(31,48,43));
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); layout.addView(title,row(-2));
         destination = label("电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
         destination.setPadding(0,dp(6),0,dp(10));

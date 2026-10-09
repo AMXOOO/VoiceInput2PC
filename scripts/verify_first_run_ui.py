@@ -15,7 +15,7 @@ import tempfile
 import time
 
 
-FIRST_RUN_TITLE = '语音输入电脑 · 首次设置'
+FIRST_RUN_TITLE = '手机万能输入法 · 首次设置'
 SW_HIDE = 0
 WM_CLOSE = 0x0010
 
