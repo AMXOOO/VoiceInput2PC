@@ -130,29 +130,33 @@ public final class BluetoothKeyboard {
         return null;
     }
     public void send(String text) {
-        String error = validateText(text);
-        if (error != null) { report(error); return; }
+        send(text, HidTextEncoder.Mode.ASCII);
+    }
+    public void send(String text, HidTextEncoder.Mode mode) {
+        final java.util.List<HidTextEncoder.Stroke> strokes;
+        try { strokes=HidTextEncoder.encode(text,mode); }
+        catch (IllegalArgumentException invalid) { report(invalid.getMessage()); return; }
         if (!isConnected()) { report("请先连接电脑蓝牙"); return; }
-        final BluetoothHidDevice targetHid = hid;
-        final BluetoothDevice target = connected;
+        final BluetoothHidDevice targetHid=hid;
+        final BluetoothDevice target=connected;
         executor.execute(() -> {
-            int sent = 0;
+            int sent=0;
             try {
-                for (int i=0; i<text.length(); i++) {
-                    if (closed || hid != targetHid || connected != target) throw new IllegalStateException("连接已中断");
-                    byte[] k = key(text.charAt(i));
-                    if (!targetHid.sendReport(target, REPORT_ID, new byte[]{k[0],0,k[1],0,0,0,0,0}))
+                for (HidTextEncoder.Stroke stroke:strokes) {
+                    if (closed || hid != targetHid || connected != target)
+                        throw new IllegalStateException("连接已中断");
+                    if (!targetHid.sendReport(target,REPORT_ID,new byte[]{stroke.modifier,0,stroke.usage,0,0,0,0,0}))
                         throw new IllegalStateException("发送按键失败");
-                    Thread.sleep(25);
-                    if (!targetHid.sendReport(target, REPORT_ID, new byte[8]))
+                    Thread.sleep(30);
+                    if (!targetHid.sendReport(target,REPORT_ID,new byte[8]))
                         throw new IllegalStateException("释放按键失败");
-                    Thread.sleep(25);
+                    Thread.sleep(30);
                     sent++;
                 }
-                report("已发送 " + sent + " 个按键事件；请在电脑输入框核对文字");
-            } catch (Exception e) {
-                targetHid.sendReport(target, REPORT_ID, new byte[8]);
-                report("发送中断，已尝试 " + sent + " 个字符；请核对电脑内容，不要盲目重发");
+                report("已发送 "+sent+" 个 HID 按键事件，请在电脑输入框核对文字");
+            } catch (Exception error) {
+                try { targetHid.sendReport(target,REPORT_ID,new byte[8]); } catch (Exception ignored) {}
+                report("发送中断，已尝试 "+sent+" 个按键；请核对电脑内容，不要盲目重发");
             }
         });
     }
