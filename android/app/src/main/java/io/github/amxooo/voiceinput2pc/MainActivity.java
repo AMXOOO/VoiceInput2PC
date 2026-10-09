@@ -344,16 +344,41 @@ public class MainActivity extends Activity {
                 .setItems(names,(dialog,which)->bluetoothKeyboard.connect(paired.get(which))).show();
         });
         layout.addView(devices,row(50));
+        final HidTextEncoder.Mode[] selectedMode = {HidTextEncoder.Mode.ASCII};
+        Spinner inputMode = new Spinner(this);
+        String[] modeLabels = {
+            "标准蓝牙键盘（英文与符号）",
+            "Microsoft Word（Alt+X 中文输入）",
+            "Linux GTK（Ctrl+Shift+U 中文输入）"
+        };
+        ArrayAdapter<String> modeAdapter = new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_item, modeLabels);
+        modeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        inputMode.setAdapter(modeAdapter);
+        inputMode.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                selectedMode[0] = position == 1 ? HidTextEncoder.Mode.WORD_ALT_X :
+                    position == 2 ? HidTextEncoder.Mode.LINUX_GTK : HidTextEncoder.Mode.ASCII;
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+        layout.addView(inputMode,row(52));
         Button send = new Button(this); send.setText("将文字输入电脑");
         send.setOnClickListener(v -> {
             if (bluetoothKeyboard == null) { bluetoothStatus.setText("蓝牙尚未初始化"); return; }
             String value=input.getText().toString();
-            String invalid=BluetoothKeyboard.validateText(value);
-            if (invalid != null) { bluetoothStatus.setText(invalid); return; }
-            new AlertDialog.Builder(this).setTitle("确认输入到电脑")
-                .setMessage("请先选中电脑上的目标输入框。将发送 " + value.length() + " 个按键，不自动按回车。")
+            final HidTextEncoder.Mode mode=selectedMode[0];
+            try { HidTextEncoder.encode(value,mode); }
+            catch (IllegalArgumentException invalid) { bluetoothStatus.setText(invalid.getMessage()); return; }
+            String warning = mode == HidTextEncoder.Mode.WORD_ALT_X
+                ? "仅适用于支持 Alt+X 的 Word 等编辑器，不适用于任意 Windows 输入框。"
+                : mode == HidTextEncoder.Mode.LINUX_GTK
+                    ? "仅适用于支持 Ctrl+Shift+U 的 Linux GTK 输入框。"
+                    : "仅支持美国键盘布局下的英文、数字和 ASCII 符号。";
+            new AlertDialog.Builder(this).setTitle("确认蓝牙输入")
+                .setMessage(warning + "\\n请先选中目标输入框。转换可能因输入法或布局而失败，请核对实际文字。")
                 .setNegativeButton("取消",null)
-                .setPositiveButton("发送",(dialog,which)->bluetoothKeyboard.send(value)).show();
+                .setPositiveButton("发送",(dialog,which)->bluetoothKeyboard.send(value,mode)).show();
         });
         layout.addView(send,row(54));
         Button back = new Button(this); back.setText("返回");
