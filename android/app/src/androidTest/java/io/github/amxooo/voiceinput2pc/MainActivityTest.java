@@ -145,6 +145,22 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         assertTrue("Primary actions are oversized",start.getLayoutParams().height<=maximum);
         assertNull("File transfer should be in the more menu",((Button)field("sendFile")).getParent());
     }
+    public void testInAppScannerCanLaunchAndCancel() throws Exception {
+        prefs.edit().clear().commit();
+        activity=getActivity();
+        android.app.Instrumentation.ActivityMonitor monitor=getInstrumentation().addMonitor(
+                "com.journeyapps.barcodescanner.CaptureActivity",null,false);
+        ui(()->activity.findViewById(1002).performClick());
+        android.app.Activity camera=getInstrumentation().waitForMonitorWithTimeout(monitor,5000);
+        assertNotNull("Scanner Activity did not open",camera);
+        getInstrumentation().waitForIdleSync();
+        assertFalse("Scanner unexpectedly closed",camera.isFinishing());
+        ui(()->camera.finish());
+        getInstrumentation().waitForIdleSync();
+        getInstrumentation().removeMonitor(monitor);
+        assertNotNull(field("pairingInput"));
+        assertNull(PairingStore.load(prefs));
+    }
     public void testScannerResultAfterTypingScreenRecreationIsSafe() throws Exception {
         activity=getActivity();
         assertNull(field("pairingInput"));

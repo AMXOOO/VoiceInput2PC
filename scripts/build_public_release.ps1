@@ -137,7 +137,7 @@ try {
     $permissionNames = @($permissions | Where-Object { $_ -match "uses-permission:" } |
         ForEach-Object { if ($_ -match "name='([^']+)'") { $Matches[1] } })
     if (($LASTEXITCODE -ne 0) -or
-            ($permissionNames.Count -ne 2) -or
+            (($permissionNames | Where-Object { $_ -notmatch '^io\.github\.amxooo\.voiceinput2pc(?:\.candidate)?\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION$' }).Count -ne 2) -or
             ($permissionNames -notcontains 'android.permission.INTERNET') -or
             ($permissionNames -notcontains 'android.permission.CAMERA')) {
         throw 'The Android APK permission set must be INTERNET and CAMERA for in-app QR scanning.'

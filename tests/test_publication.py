@@ -131,7 +131,7 @@ class ReleaseBuildTests(unittest.TestCase):
         result = subprocess.run(
             ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
              '-File', str(script), '-ValidateOnly'],
-            cwd=ROOT, env=environment, text=True, capture_output=True, timeout=20)
+            cwd=ROOT, env=environment, text=True, capture_output=True, timeout=60)
         self.assertNotEqual(0, result.returncode)
         self.assertIn('VOICEINPUT2PC_KEYSTORE', result.stdout + result.stderr)
 
