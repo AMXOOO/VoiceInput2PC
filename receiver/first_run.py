@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -16,6 +16,7 @@ from receiver.pairing import (
     Pairing,
     TRANSPORT_TAILCAT,
     TRANSPORT_AUTO,
+    TRANSPORT_LAN,
     detect_private_addresses,
     encode_pairing,
     prepare_receiver,
@@ -135,41 +136,39 @@ class FirstRunDialog:
 
 class PairingDialog:
     def __init__(self, root, pairing: Pairing, allow_regenerate: bool,
-                 on_regenerate=None):
+                 on_regenerate=None, remote_enabled=True):
         self.root = root
         self.window = tk.Toplevel(root)
         self.window.title('语音输入电脑 · 配对手机')
-        self.window.resizable(False, False)
+        self.window.resizable(True, True)
+        self.window.minsize(480, 440)
+        self.window.geometry(f'620x{min(760, self.window.winfo_screenheight() - 100)}')
         self.window.transient(root)
 
         self.remote_warning = ''
-        try:
-            server = get_or_start(pairing.port)
-            if not server.address:
-                raise TailcatUnavailable('没有获得跨网络地址')
-            self.pairing = Pairing(
-                pairing.host, pairing.port, pairing.token, pairing.fingerprint,
-                transport=TRANSPORT_AUTO,
-                tailcat_address=server.address,
-                device_id=pairing.device_id)
-        except (OSError, ValueError, TailcatUnavailable) as exc:
-            # Remote transport is an enhancement, not a prerequisite for LAN.
-            # Keep local pairing available instead of blocking the whole product.
-            self.pairing = pairing
-            self.remote_warning = '跨网络连接暂不可用；本次配对仅支持当前局域网。稍后可重新打开配对窗口重试。'
+        local_pairing = replace(pairing, transport=TRANSPORT_LAN, tailcat_address='')
+        self.pairing = local_pairing
+        if remote_enabled:
+            try:
+                server = get_or_start(pairing.port)
+                if not server.address:
+                    raise TailcatUnavailable('没有获得跨网络地址')
+                self.pairing = replace(local_pairing, transport=TRANSPORT_AUTO,
+                                       tailcat_address=server.address)
+            except (OSError, ValueError, TailcatUnavailable):
+                self.remote_warning = '跨网络连接暂不可用；本次配对仅支持局域网。'
 
         self.view = pairing_view_model(self.pairing)
 
         frame = ttk.Frame(self.window, padding=20)
         frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text='扫码一次，之后自动连接',
+        ttk.Label(frame, text='扫码连接这台电脑',
                   font=('Microsoft YaHei UI', 17, 'bold')).pack(anchor='center')
-        ttk.Label(frame, text='同一局域网优先直连；离开局域网后自动使用跨网络连接。').pack(
+        ttk.Label(frame, text=('局域网优先；无法直连时使用跨网络备用。' if remote_enabled
+                               else '仅局域网直连；跨网络连接已关闭。')).pack(
             anchor='center', pady=(5, 8))
         self.mode_label = ttk.Label(frame, text='')
         self.mode_label.pack(anchor='center', pady=(0, 8))
-        self.qr_label = ttk.Label(frame)
-        self.qr_label.pack(anchor='center')
         self.endpoint_label = ttk.Label(frame, text='')
         self.endpoint_label.pack(anchor='center', pady=(8, 3))
         if self.remote_warning:
@@ -180,22 +179,61 @@ class PairingDialog:
             anchor='center')
 
         buttons = ttk.Frame(frame)
-        buttons.pack(fill='x', pady=(14, 0))
+        buttons.pack(side='bottom', fill='x', pady=(14, 0))
         ttk.Button(buttons, text='复制完整配对码', command=self.copy).pack(side='left')
         if allow_regenerate and on_regenerate is not None:
             ttk.Button(buttons, text='换一组配对码', command=lambda: self.regenerate(
                 on_regenerate)).pack(side='left', padx=8)
         ttk.Button(buttons, text='完成', command=self.window.destroy).pack(side='right')
+        sizes = ttk.Frame(frame)
+        sizes.pack(side='bottom', fill='x', pady=(10, 0))
+        ttk.Label(sizes, text='二维码大小').pack(side='left')
+        self.qr_size = tk.IntVar(value=360)
+        ttk.Scale(sizes, from_=200, to=640, variable=self.qr_size,
+                  command=lambda _value: self.render()).pack(side='left', fill='x', expand=True, padx=10)
+        ttk.Button(sizes, text='恢复默认', command=self.reset_qr_size).pack(side='right')
+        self.qr_size_label = ttk.Label(sizes, width=8)
+        self.qr_size_label.pack(side='right')
+        viewport = ttk.Frame(frame)
+        viewport.pack(fill='both', expand=True, pady=8)
+        viewport.rowconfigure(0, weight=1)
+        viewport.columnconfigure(0, weight=1)
+        self.qr_canvas = tk.Canvas(viewport, background='white', highlightthickness=0)
+        self.qr_canvas.grid(row=0, column=0, sticky='nsew')
+        xscroll = ttk.Scrollbar(viewport, orient='horizontal', command=self.qr_canvas.xview)
+        yscroll = ttk.Scrollbar(viewport, orient='vertical', command=self.qr_canvas.yview)
+        xscroll.grid(row=1, column=0, sticky='ew')
+        yscroll.grid(row=0, column=1, sticky='ns')
+        self.qr_canvas.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+        self.qr_canvas.bind('<Configure>', lambda _event: self.center_qr())
         self.render()
+
+    def reset_qr_size(self):
+        self.qr_size.set(360)
+        self.render()
+
+    def center_qr(self):
+        if not hasattr(self, 'qr_image'):
+            return
+        size = self.qr_image.width()
+        width = max(size, self.qr_canvas.winfo_width())
+        height = max(size, self.qr_canvas.winfo_height())
+        self.qr_canvas.coords('qr', (width - size) // 2, (height - size) // 2)
+        self.qr_canvas.configure(scrollregion=(0, 0, width, height))
 
     def render(self):
         qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M,
-                           box_size=7, border=3)
+                           box_size=1, border=4)
         qr.add_data(self.view.uri)
         qr.make(fit=True)
+        modules = len(qr.get_matrix())
+        qr.box_size = max(1, int(self.qr_size.get()) // modules)
         image = qr.make_image(fill_color='black', back_color='white').convert('RGB')
         self.qr_image = ImageTk.PhotoImage(image)
-        self.qr_label.config(image=self.qr_image)
+        self.qr_canvas.delete('qr')
+        self.qr_canvas.create_image(0, 0, image=self.qr_image, anchor='nw', tags='qr')
+        self.qr_size_label.config(text=f'{image.width} 像素')
+        self.center_qr()
         self.mode_label.config(text=self.view.transport_label)
         self.endpoint_label.config(text='连接方式：' + self.view.endpoint)
 
@@ -223,5 +261,5 @@ def run_first_setup(root, folder: Path, executable: Path) -> bool:
 
 
 def show_pairing(root, pairing: Pairing, allow_regenerate: bool,
-                 on_regenerate=None) -> None:
-    PairingDialog(root, pairing, allow_regenerate, on_regenerate).show_modal()
+                 on_regenerate=None, remote_enabled=True) -> None:
+    PairingDialog(root, pairing, allow_regenerate, on_regenerate, remote_enabled).show_modal()

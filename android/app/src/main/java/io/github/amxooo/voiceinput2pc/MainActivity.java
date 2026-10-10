@@ -10,6 +10,10 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Build;
+import android.view.WindowInsets;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -33,6 +37,8 @@ public class MainActivity extends Activity {
     private EditText pairingInput;
     private SharedPreferences prefs;
     private RelayTransport client;
+    private PairingConfig currentPairing;
+    private boolean scannerReturnToTyping;
     private RelayTransport receiveQueueClient;
     private CommitTracker tracker;
     private String host, receiveQueueHost, legacyPendingRaw = "";
@@ -58,7 +64,10 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         prefs = getSharedPreferences("voiceinput2pc", MODE_PRIVATE);
+        scannerReturnToTyping = savedInstanceState != null && savedInstanceState.getBoolean("scannerReturnToTyping", false);
         PairingConfig pairing = PairingStore.load(prefs);
         String incoming = incomingPairing(getIntent());
         if (incoming != null) {
@@ -70,6 +79,11 @@ public class MainActivity extends Activity {
         } else {
             showTypingScreen(pairing);
         }
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        outState.putBoolean("scannerReturnToTyping", scannerReturnToTyping);
+        super.onSaveInstanceState(outState);
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -96,15 +110,19 @@ public class MainActivity extends Activity {
         setTitle("连接电脑");
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(22), dp(28), dp(22), dp(18));
+        applyScreenInsets(layout);
         layout.setBackgroundColor(Color.rgb(247,248,244));
-        TextView title = label("连接电脑", 28, Color.rgb(31,48,43));
+        TextView title = label("连接电脑", 22, Color.rgb(31,48,43));
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         layout.addView(title, row(-2));
-        TextView guide = label("在电脑接收端点击“配对手机”，用系统相机扫描二维码；也可以复制完整配对码后粘贴到下面。",
+        TextView guide = label("在电脑接收端点击“配对手机”，点击下方“扫码连接”；也可以粘贴完整配对码。",
                 15, Color.DKGRAY);
         guide.setPadding(0, dp(10), 0, dp(16));
         layout.addView(guide, row(-2));
+        Button scan = new Button(this);
+        scan.setId(1002); scan.setText("扫码连接");
+        scan.setOnClickListener(v -> launchScanner());
+        layout.addView(scan, row(48));
         pairingInput = new EditText(this);
         pairingInput.setHint("粘贴 voiceinput2pc:// 开头的完整配对码");
         pairingInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -120,12 +138,97 @@ public class MainActivity extends Activity {
         pairingButton.setTextColor(Color.WHITE);
         pairingButton.setBackgroundTintList(ColorStateList.valueOf(green));
         pairingButton.setOnClickListener(v -> importPairing(pairingInput.getText().toString().trim()));
-        layout.addView(pairingButton, row(58));
-        TextView safety = label("配对码相当于连接密码，只在自己的手机和电脑之间使用。应用不需要麦克风或相机权限。",
+        layout.addView(pairingButton, row(48));
+        TextView safety = label("配对码相当于连接密码，只在自己的手机和电脑之间使用。仅扫码时申请相机权限，不需要麦克风权限。",
                 12, Color.GRAY);
         safety.setPadding(0, dp(12), 0, 0);
         layout.addView(safety, row(-2));
         setContentView(layout);
+    }
+
+    private void applyScreenInsets(LinearLayout layout) {
+        layout.setPadding(dp(12), dp(8), dp(12), dp(6));
+        if (Build.VERSION.SDK_INT >= 30) {
+            layout.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                // Edge-to-edge content gets one inset; never add keyboard height twice.
+                view.setPadding(bars.left + dp(12), bars.top + dp(8), bars.right + dp(12),
+                        Math.max(bars.bottom, ime.bottom) + dp(6));
+                return insets;
+            });
+        }
+    }
+
+    private void launchScanner() {
+        IntentIntegrator scanner = new IntentIntegrator(this);
+        scanner.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
+        scanner.setPrompt("将电脑配对二维码放入框内");
+        scanner.setBeepEnabled(false);
+        scanner.setBarcodeImageEnabled(false);
+        scanner.setOrientationLocked(false);
+        scanner.initiateScan();
+    }
+
+    private boolean canChangeConnection() {
+        if (busy || (tracker != null && tracker.pending() != null)) {
+            say("请先处理待确认文字，再调整连接。", true);
+            return false;
+        }
+        if (tracker != null) { pauseLocal(); return save(); }
+        return true;
+    }
+
+    private void showMore() {
+        String[] items = {"扫码连接电脑", "发送文件到电脑", "连接方式", "连接诊断", "重新探测局域网", "使用说明"};
+        new AlertDialog.Builder(this).setTitle("更多")
+                .setItems(items, (dialog, which) -> {
+                    if (which == 0) {
+                        if (!canChangeConnection()) return;
+                        scannerReturnToTyping = true;
+                        showPairingScreen("扫描电脑接收端的配对二维码。");
+                        launchScanner();
+                    } else if (which == 1) {
+                        if (sendFile.isEnabled()) sendFile.performClick();
+                        else say("当前暂不能发送文件，请确认电脑连接和版本。", true);
+                    } else if (which == 2) showConnectionModes();
+                    else if (which == 3) showConnectionDiagnostics();
+                    else if (which == 4) {
+                        if (!canChangeConnection()) return;
+                        try { client = createTransport(currentPairing); health(); }
+                        catch (Exception failure) { say(pairingFailureText(failure), true); }
+                    } else new AlertDialog.Builder(this).setTitle("使用说明")
+                            .setMessage("先选中电脑输入框，再点开始。使用输入法麦克风输入，确认文字后自动发送。切到后台会暂停。文件单个不超过 200MB，保存到电脑 Downloads/VoiceInput2PC。")
+                            .setPositiveButton("知道了", null).show();
+                }).show();
+    }
+
+    private void showConnectionModes() {
+        boolean local = prefs.getBoolean("lanOnly_" + currentPairing.fingerprint, false);
+        new AlertDialog.Builder(this).setTitle("连接方式")
+                .setSingleChoiceItems(new String[]{"自动：局域网优先，跨网络备用", "仅局域网"}, local ? 1 : 0,
+                        (dialog, which) -> {
+                            if (!canChangeConnection()) return;
+                            if (!prefs.edit().putBoolean("lanOnly_" + currentPairing.fingerprint, which == 1).commit()) {
+                                say("连接设置保存失败。", true); return;
+                            }
+                            dialog.dismiss(); showTypingScreen(currentPairing);
+                        }).setNegativeButton("取消", null).show();
+    }
+
+    private void showConnectionDiagnostics() {
+        String detail = "电脑局域网地址：" + currentPairing.host + ":" + currentPairing.port;
+        if (client instanceof ConnectionManager) {
+            ConnectionManager manager = (ConnectionManager) client;
+            detail += "\n当前路径：" + manager.activeMode()
+                    + "\n探测地址：" + manager.currentLanHost()
+                    + "\n局域网探测：" + manager.lastLanFailure();
+        } else detail += "\n连接设置：" + (prefs.getBoolean("lanOnly_" + currentPairing.fingerprint, false)
+                ? "仅局域网" : currentPairing.transport);
+        detail += "\n\n旁路由修改网关不会必然阻止直连；若探测失败，请检查电脑地址、防火墙及设备间路由。";
+        new AlertDialog.Builder(this).setTitle("连接诊断").setMessage(detail)
+                .setPositiveButton("关闭", null).show();
     }
 
     private void importPairing(String raw) {
@@ -175,11 +278,17 @@ public class MainActivity extends Activity {
     }
 
     private RelayTransport createTransport(PairingConfig pairing) throws Exception {
+        if (prefs.getBoolean("lanOnly_" + pairing.fingerprint, false)) {
+            PairingConfig local = new PairingConfig(pairing.host, pairing.port, pairing.token,
+                    pairing.fingerprint, PairingConfig.TRANSPORT_LAN, "", pairing.deviceId);
+            return new RelayClient(this, local);
+        }
         return pairing.isAuto() ? new ConnectionManager(this, pairing) : new RelayClient(this, pairing);
     }
 
     private String routeNote(RelayTransport transport) {
-        if (!(transport instanceof ConnectionManager)) return "";
+        if (!(transport instanceof ConnectionManager)) return currentPairing != null
+                && !PairingConfig.TRANSPORT_TAILCAT.equals(currentPairing.transport) ? " · 本地直连" : "";
         String mode = ((ConnectionManager) transport).activeMode();
         if ("lan".equals(mode)) return " · 本地直连";
         if ("tailcat".equals(mode)) return " · 远程连接";
@@ -197,6 +306,7 @@ public class MainActivity extends Activity {
     }
 
     private void showTypingScreen(PairingConfig pairing) {
+        currentPairing = pairing;
         clearQueuedReceive();
         fileTransferSupported = false;
         setTitle("语音输入电脑");
@@ -226,18 +336,21 @@ public class MainActivity extends Activity {
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(20),dp(20),dp(20),dp(12));
+        applyScreenInsets(layout);
         layout.setBackgroundColor(Color.rgb(247,248,244));
-        layout.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(dp(20), insets.getSystemWindowInsetTop()+dp(12), dp(20), insets.getSystemWindowInsetBottom()+dp(8));
-            return insets;
-        });
-        TextView title = label("语音输入电脑",28,Color.rgb(31,48,43));
-        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); layout.addView(title,row(-2));
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView title = label("语音输入电脑",20,Color.rgb(31,48,43));
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        Button more = new Button(this); more.setId(1003); more.setText("更多");
+        more.setOnClickListener(v -> showMore());
+        heading.addView(more, new LinearLayout.LayoutParams(dp(72), dp(48)));
+        layout.addView(heading,row(-2));
         destination = label(pairing.isAuto()
                 ? "这台电脑 · 自动连接 · 更换 ›"
                 : "电脑  " + host + "   · 更换 ›",13,Color.DKGRAY);
-        destination.setPadding(0,dp(6),0,dp(10));
+        destination.setPadding(0,dp(2),0,dp(4));
         destination.setOnClickListener(v -> {
             if (busy || tracker.pending() != null) {
                 say("请先处理待确认文字，再更换电脑。", true);
@@ -256,12 +369,12 @@ public class MainActivity extends Activity {
         editor.setHint("点开始后，用输入法的麦克风说话。已确认文字会自动输入电脑。");
         editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         editor.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_ACTION_NONE);
-        editor.setPadding(dp(14),dp(14),dp(14),dp(14)); editor.setMinLines(3);
+        editor.setPadding(dp(10),dp(10),dp(10),dp(10)); editor.setMinLines(3);
         GradientDrawable card = new GradientDrawable();
         card.setColor(Color.WHITE); card.setCornerRadius(dp(14)); card.setStroke(dp(1),Color.rgb(215,224,217));
         editor.setBackground(card);
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1,0,1);
-        inputParams.topMargin=dp(12); inputParams.bottomMargin=dp(8);
+        inputParams.topMargin=dp(6); inputParams.bottomMargin=dp(4);
         layout.addView(editor,inputParams);
         counter = label("",12,Color.GRAY); layout.addView(counter,row(-2));
         retry = new Button(this); retry.setText("重试确认（同一条）");
@@ -271,16 +384,12 @@ public class MainActivity extends Activity {
         start = new Button(this); start.setText("开始输入到电脑");
         receive = new Button(this); receive.setText("接收");
         start.setTextColor(Color.WHITE); start.setBackgroundTintList(ColorStateList.valueOf(green));
-        actions.addView(fresh,new LinearLayout.LayoutParams(0,dp(58),1));
-        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(0,dp(58),2);
+        actions.addView(fresh,new LinearLayout.LayoutParams(0,dp(48),1));
+        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(0,dp(48),2);
         startParams.leftMargin=dp(8); actions.addView(start,startParams);
-        LinearLayout.LayoutParams receiveParams = new LinearLayout.LayoutParams(0,dp(58),1);
+        LinearLayout.LayoutParams receiveParams = new LinearLayout.LayoutParams(0,dp(48),1);
         receiveParams.leftMargin=dp(8); actions.addView(receive,receiveParams); layout.addView(actions,row(-2));
         sendFile = new Button(this); sendFile.setText("发送文件到电脑");
-        LinearLayout.LayoutParams fileParams = row(52); fileParams.topMargin = dp(8);
-        layout.addView(sendFile, fileParams);
-        TextView hint=label("输入时保持亮屏；手动锁屏或切到后台会暂停。文件发送支持单文件 ≤ 200MB，保存到电脑 Downloads/VoiceInput2PC。",12,Color.GRAY);
-        hint.setPadding(0,dp(8),0,dp(2)); layout.addView(hint,row(-2));
         setContentView(layout);
         loading=true; editor.setText(draft); editor.setSelection(editor.length()); loading=false;
         editor.setEditObserver(this::edited);
@@ -610,6 +719,19 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        IntentResult scanned = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
+        if (scanned != null) {
+            if (scanned.getContents() != null) {
+                // Camera UI may outlive this Activity after background process recreation.
+                showPairingScreen("正在读取扫码结果…");
+                pairingInput.setText(scanned.getContents());
+                importPairing(scanned.getContents());
+            } else if (scannerReturnToTyping && currentPairing != null) {
+                showTypingScreen(currentPairing);
+            } else say("已取消扫码，可重新扫描或粘贴配对码。", false);
+            scannerReturnToTyping = false;
+            return;
+        }
         if (requestCode != PICK_FILE_REQUEST || resultCode != RESULT_OK
                 || data == null || data.getData() == null) return;
         Uri uri = data.getData();
@@ -721,24 +843,25 @@ public class MainActivity extends Activity {
     }
     private void health() {
         final String address=host;
+        final RelayTransport probeClient = client;
         worker.execute(() -> {
             try {
-                JSONObject result=client.request(address,null);
+                JSONObject result=probeClient.request(address,null);
                 handler.post(() -> {
-                    if (destroyed || busy || tracker.isActive() || tracker.pending()!=null || tracker.isSaved() || tracker.hasConflict()) return;
+                    if (destroyed || probeClient != client || busy || tracker.isActive() || tracker.pending()!=null || tracker.isSaved() || tracker.hasConflict()) return;
                     if (!Boolean.TRUE.equals(result.opt("ok")) || !"VoiceInput2PC".equals(result.optString("app")) || result.optInt("protocol") != 2) {
                         say("电脑接收端需要更新到远程键盘版本。",true);
                     } else {
                         fileTransferSupported = hasFeature(result, "file-upload-v1");
                         updateControls();
-                        String routeNote = routeNote(client);
+                        String routeNote = routeNote(probeClient);
                         say(result.optBoolean("paused") ? "已连接" + routeNote + " · 请先在电脑启用输入，再选中输入框" : "已连接" + routeNote + " · 先选中电脑输入框，再点开始",false);
                     }
                 });
             } catch(Exception e) {
                 handler.post(() -> {
-                    if (!destroyed && !busy && !tracker.isActive() && tracker.pending()==null && !tracker.isSaved() && !tracker.hasConflict())
-                        say("暂未连接 · 请确认电脑接收端已启动、两端在同一局域网",true);
+                    if (!destroyed && probeClient == client && !busy && !tracker.isActive() && tracker.pending()==null && !tracker.isSaved() && !tracker.hasConflict())
+                        say(pairingFailureText(e),true);
                 });
             }
         });

@@ -173,9 +173,44 @@ class TailcatServer:
 
 
 _ACTIVE: dict[int, TailcatServer] = {}
+_POLICY_LOCK = threading.RLock()
+_ENABLED_LOCK = threading.Lock()
+_REMOTE_ENABLED = True
+
+
+def set_remote_enabled(enabled: bool):
+    global _REMOTE_ENABLED
+    with _ENABLED_LOCK:
+        _REMOTE_ENABLED = bool(enabled)
+    if not enabled:
+        def shutdown_if_disabled():
+            with _POLICY_LOCK:
+                if not _remote_enabled():
+                    stop_all()
+        worker = threading.Thread(target=shutdown_if_disabled, daemon=True,
+                                  name='voiceinput2pc-disable-remote')
+        worker.start()
+        return worker
+    return None
+
+
+def _remote_enabled():
+    with _ENABLED_LOCK:
+        return _REMOTE_ENABLED
 
 
 def get_or_start(port: int) -> TailcatServer:
+    with _POLICY_LOCK:
+        if not _remote_enabled():
+            raise TailcatUnavailable('跨网络备用已关闭，当前仅使用局域网')
+        server = _get_or_start(port)
+        if not _remote_enabled():
+            stop_all()
+            raise TailcatUnavailable('跨网络备用已关闭，当前仅使用局域网')
+        return server
+
+
+def _get_or_start(port: int) -> TailcatServer:
     existing = _ACTIVE.get(int(port))
     if existing is not None and existing.process is not None and existing.process.poll() is None:
         if existing.address is None:
@@ -188,9 +223,10 @@ def get_or_start(port: int) -> TailcatServer:
 
 
 def stop_all():
-    while _ACTIVE:
-        _, server = _ACTIVE.popitem()
-        server.stop()
+    with _POLICY_LOCK:
+        while _ACTIVE:
+            _, server = _ACTIVE.popitem()
+            server.stop()
 
 
 atexit.register(stop_all)

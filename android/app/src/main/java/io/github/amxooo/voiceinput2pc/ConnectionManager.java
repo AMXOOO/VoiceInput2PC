@@ -17,12 +17,20 @@ public final class ConnectionManager implements RelayTransport {
 
     private final Context context;
     private final PairingConfig pairing;
+    interface TransportFactory {
+        RelayTransport create(PairingConfig config, int connectTimeout, int readTimeout) throws Exception;
+    }
+    private final TransportFactory factory;
 
     private RelayTransport active;
     private String activeMode = "none";
     private String lanHost;
     private long lastLanProbeAt;
     private boolean lanProbeInFlight;
+    private String lastLanFailure = "尚未探测";
+
+    public synchronized String lastLanFailure() { return lastLanFailure; }
+    private synchronized void recordLanFailure(Throwable failure) { lastLanFailure = safe(failure); }
 
     interface Operation {
         JSONObject run(RelayTransport transport, String targetHost) throws Exception;
@@ -41,11 +49,16 @@ public final class ConnectionManager implements RelayTransport {
     }
 
     public ConnectionManager(Context context, PairingConfig pairing) {
+        this(context, pairing, (config, connect, read) -> new RelayClient(context, config, connect, read));
+    }
+
+    ConnectionManager(Context context, PairingConfig pairing, TransportFactory factory) {
         if (context == null || pairing == null || !pairing.isAuto()) {
             throw new IllegalArgumentException("auto pairing required");
         }
         this.context = context.getApplicationContext();
         this.pairing = pairing;
+        this.factory = factory;
         this.lanHost = pairing.host;
     }
 
@@ -62,14 +75,14 @@ public final class ConnectionManager implements RelayTransport {
                 host, pairing.port, pairing.token, pairing.fingerprint,
                 PairingConfig.TRANSPORT_LAN, "", pairing.deviceId);
         // LAN should fail fast so off-LAN users don't wait for a long timeout.
-        return new RelayClient(context, lan, 1200, 3500);
+        return factory.create(lan, 2500, 3500);
     }
 
     private RelayTransport tailcat() throws Exception {
         PairingConfig remote = new PairingConfig(
                 pairing.host, pairing.port, pairing.token, pairing.fingerprint,
                 PairingConfig.TRANSPORT_TAILCAT, pairing.tailcatAddress, pairing.deviceId);
-        return new RelayClient(context, remote, 10000, 20000);
+        return factory.create(remote, 10000, 20000);
     }
 
     private synchronized Route activeRoute() {
@@ -91,16 +104,20 @@ public final class ConnectionManager implements RelayTransport {
         try {
             RelayTransport candidate = lan(hostSnapshot);
             JSONObject health = candidate.request(hostSnapshot, null);
+            if (!validHealth(health)) throw new Exception("局域网接收端版本不兼容");
             if (validHealth(health)) {
                 absorbLanHosts(health);
                 synchronized (this) {
                     active = candidate;
+                    lanHost = hostSnapshot;
                     activeMode = "lan";
+                    lastLanFailure = "已连接";
                 }
                 return new Route(candidate, "lan", hostSnapshot);
             }
         } catch (Exception failure) {
             lanFailure = failure;
+            recordLanFailure(failure);
         }
 
         try {
@@ -130,6 +147,7 @@ public final class ConnectionManager implements RelayTransport {
             absorbLanHosts(result);
             return result;
         } catch (Exception firstFailure) {
+            if ("lan".equals(first.mode)) recordLanFailure(firstFailure);
             if (!safeRetry) throw firstFailure;
 
             synchronized (this) {
@@ -175,11 +193,14 @@ public final class ConnectionManager implements RelayTransport {
                         // another valid route.
                         if ("tailcat".equals(activeMode)) {
                             active = candidate;
+                            lanHost = hostSnapshot;
                             activeMode = "lan";
+                            lastLanFailure = "已连接";
                         }
                     }
                 }
             } catch (Exception ignored) {
+                recordLanFailure(ignored);
                 // Still away from the LAN; keep the working Tailcat route.
             } finally {
                 synchronized (ConnectionManager.this) {
@@ -224,7 +245,9 @@ public final class ConnectionManager implements RelayTransport {
                     absorbLanHosts(health);
                     synchronized (this) {
                         active = candidate;
+                        lanHost = hostSnapshot;
                         activeMode = "lan";
+                        lastLanFailure = "已连接";
                     }
                     return new Route(candidate, "lan", hostSnapshot);
                 }
@@ -247,6 +270,14 @@ public final class ConnectionManager implements RelayTransport {
         JSONArray values = result.optJSONArray("lan_hosts");
         if (values == null) return;
 
+        synchronized (this) {
+            // An authenticated response must not replace the endpoint already
+            // proven reachable with the first unrelated NIC in the PC list.
+            if ("lan".equals(activeMode)) return;
+            for (int i = 0; i < values.length(); i++) {
+                if (lanHost.equals(values.optString(i, ""))) return;
+            }
+        }
         for (int i = 0; i < values.length(); i++) {
             String candidate = values.optString(i, "");
             if (!validHost(candidate)) continue;

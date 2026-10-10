@@ -134,10 +134,13 @@ try {
     Invoke-Checked $python @('scripts\verify_receiver_runtime.py', $exe)
     Invoke-Checked $apksigner @('verify', '--verbose', $apk)
     $permissions = @(& $aapt dump permissions $apk)
+    $permissionNames = @($permissions | Where-Object { $_ -match "uses-permission:" } |
+        ForEach-Object { if ($_ -match "name='([^']+)'") { $Matches[1] } })
     if (($LASTEXITCODE -ne 0) -or
-            ($permissions.Count -ne 2) -or
-            ($permissions[1] -notmatch "android.permission.INTERNET")) {
-        throw 'The Android APK permission set is not exactly INTERNET.'
+            ($permissionNames.Count -ne 2) -or
+            ($permissionNames -notcontains 'android.permission.INTERNET') -or
+            ($permissionNames -notcontains 'android.permission.CAMERA')) {
+        throw 'The Android APK permission set must be INTERNET and CAMERA for in-app QR scanning.'
     }
     $apkEntries = @(& $aapt list $apk)
     if ($LASTEXITCODE -ne 0 -or ($apkEntries -match '(^|/)pairing\.json$')) {

@@ -99,7 +99,7 @@ public final class RelayClient implements RelayTransport {
         String target = forcedHost == null ? host : forcedHost;
         if (!target.matches("[A-Za-z0-9.-]+")) throw new Exception("电脑地址格式不正确");
         URL url = new URL("https://" + target + ":" + port + "/file/chunk");
-        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection(java.net.Proxy.NO_PROXY);
         configure(conn);
         conn.setRequestMethod("POST");
         conn.setDoOutput(true);
@@ -123,7 +123,7 @@ public final class RelayClient implements RelayTransport {
         URL url = new URL("https://" + target + ":" + port + path);
         final HttpsURLConnection conn;
         try {
-            conn = (HttpsURLConnection) url.openConnection();
+            conn = (HttpsURLConnection) url.openConnection(java.net.Proxy.NO_PROXY);
         } catch (Exception openFailure) {
             throw new Exception("阶段3/4：无法打开电脑连接：" + safeMessage(openFailure), openFailure);
         }

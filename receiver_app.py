@@ -20,7 +20,7 @@ from receiver.http_server import make_server
 from receiver.file_transfer import FileTransferManager
 from receiver.first_run import run_first_setup, show_pairing
 from receiver.pairing import load_pairing, prepare_receiver
-from receiver.tailcat import get_or_start, stop_all, TailcatUnavailable
+from receiver.tailcat import get_or_start, stop_all, set_remote_enabled, TailcatUnavailable
 from receiver.win_input import type_text, capture_target, copy_text
 
 
@@ -106,6 +106,41 @@ def activate_existing_window(user32=None):
     return False
 
 
+def create_history_panes(parent):
+    panes = ttk.Panedwindow(parent, orient='vertical')
+    list_frame = ttk.Frame(panes)
+    text_frame = ttk.Frame(panes)
+    listing = tk.Listbox(list_frame, height=6, font=('Microsoft YaHei UI', 10), exportselection=False)
+    listing.pack(side='left', fill='both', expand=True)
+    list_scroll = ttk.Scrollbar(list_frame, command=listing.yview)
+    list_scroll.pack(side='right', fill='y')
+    listing.configure(yscrollcommand=list_scroll.set)
+    preview = tk.Text(text_frame, height=5, wrap='word', font=('Microsoft YaHei UI', 11))
+    preview.pack(side='left', fill='both', expand=True)
+    text_scroll = ttk.Scrollbar(text_frame, command=preview.yview)
+    text_scroll.pack(side='right', fill='y')
+    preview.configure(yscrollcommand=text_scroll.set)
+    panes.add(list_frame, weight=1)
+    panes.add(text_frame, weight=2)
+    return panes, listing, preview
+
+
+def load_remote_enabled(folder):
+    try:
+        data = json.loads((Path(folder) / 'ui-settings.json').read_text(encoding='utf-8'))
+        value = data.get('remote_enabled', True)
+        return value if isinstance(value, bool) else True
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
+def save_remote_enabled(folder, enabled):
+    path = Path(folder) / 'ui-settings.json'
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'remote_enabled': bool(enabled)}), encoding='utf-8')
+    temporary.replace(path)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config-dir', default=str(Path(os.environ['LOCALAPPDATA']) / 'VoiceInput2PC'))
@@ -132,7 +167,8 @@ def main():
     root = tk.Tk()
     root.withdraw()
     root.title(APP_TITLE)
-    root.geometry('680x470')
+    root.geometry('760x620')
+    root.minsize(640, 500)
     root.protocol('WM_DELETE_WINDOW', root.withdraw)
     stage, port = '读取配置', None
     first_setup = False
@@ -166,6 +202,8 @@ def main():
         return
 
     commands = queue.Queue()
+    remote_enabled = tk.BooleanVar(value=load_remote_enabled(folder))
+    set_remote_enabled(remote_enabled.get())
     image = Image.new('RGBA', (64, 64), '#16705b')
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((10, 16, 54, 47), radius=5, outline='white', width=4)
@@ -182,13 +220,28 @@ def main():
     ttk.Label(container, text='语音输入电脑', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
     status = ttk.Label(container, text='正在接收 · 手机可通过局域网或跨网络安全连接')
     status.pack(anchor='w', pady=(6, 4))
+    network_row = ttk.Frame(container)
+    network_row.pack(fill='x', pady=6)
+    ttk.Label(network_row, text='连接方式').pack(side='left')
+    automatic_label = '自动连接（局域网优先，跨网络备用）'
+    local_label = '仅局域网（关闭跨网络备用）'
+    network_mode = tk.StringVar(value=automatic_label if remote_enabled.get() else local_label)
+    network_selector = ttk.Combobox(network_row, state='readonly', textvariable=network_mode,
+                                    values=(automatic_label, local_label), width=38)
+    network_selector.pack(side='left', padx=10)
     ttk.Label(container, text='电脑点中输入位置 → 手机开始输入 → 使用手机输入法的语音按钮。').pack(anchor='w')
     ttk.Label(container, text='无需逐条发送；不按回车、不改剪贴板。切换输入位置前请先暂停。').pack(anchor='w')
     ttk.Label(container, text='最近收到的文字（仅保存在本机，显示最近 100 条）').pack(anchor='w', pady=(20, 5))
-    listing = tk.Listbox(container, height=6, font=('Microsoft YaHei UI', 10), exportselection=False)
-    listing.pack(fill='x')
-    preview = tk.Text(container, height=5, wrap='word', font=('Microsoft YaHei UI', 11))
-    preview.pack(fill='both', expand=True, pady=8)
+    ttk.Label(container, text='拖动列表与文字框之间的分隔线，可单独调整文字区域高度。').pack(anchor='w')
+    panes, listing, preview = create_history_panes(container)
+    panes.pack(fill='both', expand=True, pady=8)
+    font_size = tk.IntVar(value=11)
+    font_row = ttk.Frame(container)
+    font_row.pack(fill='x', pady=(0, 6))
+    ttk.Label(font_row, text='文字大小').pack(side='left')
+    ttk.Scale(font_row, from_=9, to=28, variable=font_size,
+              command=lambda _value: preview.configure(font=('Microsoft YaHei UI', font_size.get()))).pack(
+                  side='left', fill='x', expand=True, padx=10)
     rows = []
 
     def refresh():
@@ -205,7 +258,8 @@ def main():
         if rows:
             listing.selection_set(0)
             select()
-        status.config(text='已暂停自动输入 · 新文字仍会保存' if relay.paused else '正在接收 · 手机可通过局域网或跨网络安全连接')
+        connection_note = '局域网优先 · 跨网络备用已启用' if remote_enabled.get() else '仅局域网 · 跨网络备用已关闭'
+        status.config(text=('已暂停自动输入 · ' if relay.paused else '正在接收 · ') + connection_note)
 
     def select(*_):
         sel = listing.curselection()
@@ -262,7 +316,7 @@ def main():
     def open_pairing():
         try:
             show_pairing(root, current_pairing, allow_regenerate=True,
-                         on_regenerate=regenerate_pairing)
+                         on_regenerate=regenerate_pairing, remote_enabled=remote_enabled.get())
         except RuntimeError as exc:
             messagebox.showerror(
                 '语音输入电脑',
@@ -303,8 +357,26 @@ def main():
         except (OSError, TailcatUnavailable):
             pass
 
-    threading.Thread(target=warm_remote_transport, daemon=True,
-                     name='voiceinput2pc-remote-transport').start()
+    def change_network_mode(_event=None):
+        enabled = network_mode.get() == automatic_label
+        try:
+            save_remote_enabled(folder, enabled)
+        except OSError as exc:
+            network_mode.set(automatic_label if remote_enabled.get() else local_label)
+            messagebox.showerror('连接设置', '保存失败：' + str(exc), parent=root)
+            return
+        remote_enabled.set(enabled)
+        set_remote_enabled(enabled)
+        if enabled:
+            threading.Thread(target=warm_remote_transport, daemon=True).start()
+        refresh()
+        status.config(text=('已启用自动连接' if enabled else '已关闭跨网络备用，仅局域网直连')
+                           + ' · 更换手机配对模式请打开“配对手机”并重新扫码')
+
+    network_selector.bind('<<ComboboxSelected>>', change_network_mode)
+    if remote_enabled.get():
+        threading.Thread(target=warm_remote_transport, daemon=True,
+                         name='voiceinput2pc-remote-transport').start()
     threading.Thread(target=icon.run, daemon=True).start()
     if should_show_main_window(args.background, args.show, first_setup):
         commands.put('show')
