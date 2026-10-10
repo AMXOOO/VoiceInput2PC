@@ -24,8 +24,8 @@ android {
         applicationId 'io.github.amxooo.voiceinput2pc'
         minSdk 26
         targetSdk 35
-        versionCode 4
-        versionName '0.4.0'
+        versionCode 6
+        versionName '0.6.1-testing'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
     }
     compileOptions {
@@ -42,10 +42,23 @@ android {
             }
         }
     }
+    sourceSets.main.assets.exclude("pairing.json")
     buildTypes {
+        debug {
+            applicationIdSuffix ".candidate"
+            resValue 'string', 'app_name', '手机输入修正版'
+        }
         release {
+            resValue 'string', 'app_name', '语音输入电脑'
             minifyEnabled false
             signingConfig signingConfigs.release
         }
     }
+}
+
+
+dependencies {
+    implementation files('libs/tailcatbridge.aar')
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+    implementation 'androidx.core:core:1.13.1'
 }

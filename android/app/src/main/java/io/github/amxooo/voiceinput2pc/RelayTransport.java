@@ -8,4 +8,9 @@ public interface RelayTransport {
     JSONObject session(String host) throws Exception;
     JSONObject receive(String host) throws Exception;
     JSONObject acknowledge(String host, String id) throws Exception;
+
+    JSONObject fileBegin(String host, JSONObject metadata) throws Exception;
+    JSONObject fileChunk(String host, String transferId, long offset,
+                         byte[] data, int length) throws Exception;
+    JSONObject fileComplete(String host, String transferId) throws Exception;
 }

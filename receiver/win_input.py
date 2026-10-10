@@ -2,13 +2,10 @@
 import ctypes as C
 from ctypes import wintypes as W
 import time
-import os
-from pathlib import PureWindowsPath
 from dataclasses import dataclass
 
 user32 = C.WinDLL('user32', use_last_error=True)
 kernel32 = C.WinDLL('kernel32', use_last_error=True)
-advapi32 = C.WinDLL('advapi32', use_last_error=True)
 ULONG_PTR = W.WPARAM
 
 
@@ -63,18 +60,6 @@ user32.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
 user32.GetWindowThreadProcessId.restype = W.DWORD
 user32.GetGUIThreadInfo.argtypes = [W.DWORD, C.POINTER(GUITHREADINFO)]
 user32.GetGUIThreadInfo.restype = W.BOOL
-user32.OpenInputDesktop.argtypes = [W.DWORD, W.BOOL, W.DWORD]
-user32.OpenInputDesktop.restype = W.HANDLE
-user32.GetUserObjectInformationW.argtypes = [W.HANDLE, C.c_int, C.c_void_p, W.DWORD, C.POINTER(W.DWORD)]
-user32.CloseDesktop.argtypes = [W.HANDLE]
-kernel32.OpenProcess.argtypes = [W.DWORD, W.BOOL, W.DWORD]
-kernel32.OpenProcess.restype = W.HANDLE
-kernel32.CloseHandle.argtypes = [W.HANDLE]
-kernel32.QueryFullProcessImageNameW.argtypes = [W.HANDLE, W.DWORD, W.LPWSTR, C.POINTER(W.DWORD)]
-advapi32.OpenProcessToken.argtypes = [W.HANDLE, W.DWORD, C.POINTER(W.HANDLE)]
-advapi32.GetTokenInformation.argtypes = [W.HANDLE, C.c_int, C.c_void_p, W.DWORD, C.POINTER(W.DWORD)]
-
-
 @dataclass(frozen=True)
 class InputTarget:
     window: int
@@ -82,46 +67,7 @@ class InputTarget:
     process: int
 
 
-def _interactive_desktop():
-    desktop = user32.OpenInputDesktop(0, False, 1)
-    if not desktop:
-        raise RuntimeError('电脑已锁定或正在显示安全窗口')
-    try:
-        name, needed = C.create_unicode_buffer(256), W.DWORD()
-        if not user32.GetUserObjectInformationW(desktop, 2, name, C.sizeof(name), C.byref(needed)) or name.value.lower() != 'default':
-            raise RuntimeError('电脑已锁定或正在显示安全窗口')
-    finally:
-        user32.CloseDesktop(desktop)
-
-
-def _check_process(pid):
-    if pid == os.getpid():
-        raise RuntimeError('请先点击其他软件中的输入框')
-    process = kernel32.OpenProcess(0x1000, False, pid)
-    if not process:
-        raise RuntimeError('不能访问这个窗口，请使用普通权限的应用')
-    token = W.HANDLE()
-    try:
-        name, length = C.create_unicode_buffer(32768), W.DWORD(32768)
-        if not kernel32.QueryFullProcessImageNameW(process, 0, name, C.byref(length)):
-            raise RuntimeError('无法确认目标应用')
-        blocked = {'cmd.exe', 'powershell.exe', 'pwsh.exe', 'windowsterminal.exe',
-                   'openconsole.exe', 'conhost.exe', 'mintty.exe', 'wsl.exe'}
-        if PureWindowsPath(name.value).name.lower() in blocked:
-            raise RuntimeError('第一版不向命令终端输入，请选普通文字输入框')
-        if not advapi32.OpenProcessToken(process, 8, C.byref(token)):
-            raise RuntimeError('无法确认目标应用权限')
-        elevated, needed = W.DWORD(), W.DWORD()
-        if not advapi32.GetTokenInformation(token, 20, C.byref(elevated), C.sizeof(elevated), C.byref(needed)) or elevated.value:
-            raise RuntimeError('暂不支持管理员权限窗口')
-    finally:
-        if token:
-            kernel32.CloseHandle(token)
-        kernel32.CloseHandle(process)
-
-
 def capture_target():
-    _interactive_desktop()
     window = user32.GetForegroundWindow()
     pid = W.DWORD()
     thread = user32.GetWindowThreadProcessId(window, C.byref(pid)) if window else 0
@@ -129,7 +75,6 @@ def capture_target():
     info.cbSize = C.sizeof(info)
     if not thread or not user32.GetGUIThreadInfo(thread, C.byref(info)) or not info.hwndFocus:
         raise RuntimeError('请先在电脑点击需要输入的位置')
-    _check_process(pid.value)
     if window != user32.GetForegroundWindow():
         raise RuntimeError('电脑窗口正在切换，请稍后重新开始')
     return InputTarget(window, info.hwndFocus, pid.value)
@@ -155,9 +100,12 @@ def type_text(text, target):
     if any(user32.GetAsyncKeyState(k) & 0x8000 for k in (0x10, 0x11, 0x12, 0x5B, 0x5C)):
         raise RuntimeError('电脑正按着修饰键，已停止本次输入')
     # One batch, no sleeps/focus activation/clipboard mutation, and no replay.
+    C.set_last_error(0)
     count = user32.SendInput(len(packets), packets, C.sizeof(INPUT))
     if count != len(packets):
-        raise RuntimeError('系统没有完整接受输入，可能已输入部分文字，请核对电脑后继续')
+        error = C.get_last_error()
+        detail = f'系统接受了 {count}/{len(packets)} 个键盘事件，Windows 错误码 {error}。'
+        raise RuntimeError(detail + '可能已输入部分文字，请核对电脑后继续；不会自动重试。')
 
 
 def copy_text(text):

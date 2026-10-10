@@ -7,6 +7,16 @@ import receiver_app
 
 
 class StartupMessageTests(unittest.TestCase):
+    def test_network_mode_defaults_to_auto_and_persists_lan_only(self):
+        self.assertTrue(hasattr(receiver_app, 'load_remote_enabled'))
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            self.assertTrue(receiver_app.load_remote_enabled(folder))
+            receiver_app.save_remote_enabled(folder, False)
+            self.assertFalse(receiver_app.load_remote_enabled(folder))
+            receiver_app.save_remote_enabled(folder, True)
+            self.assertTrue(receiver_app.load_remote_enabled(folder))
+
     def test_manual_launch_is_visible_and_only_background_launch_stays_hidden(self):
         self.assertTrue(receiver_app.should_show_main_window())
         self.assertTrue(receiver_app.should_show_main_window(show=True))

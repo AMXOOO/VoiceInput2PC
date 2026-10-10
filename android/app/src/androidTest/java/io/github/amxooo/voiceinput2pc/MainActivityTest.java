@@ -128,6 +128,68 @@ public final class MainActivityTest extends ActivityInstrumentationTestCase2<Mai
         assertNotNull(field("pairingInput"));
         assertTrue(activity.getTitle().toString().contains("连接电脑"));
     }
+    public void testPairingIncludesAnInAppScannerButton() throws Exception {
+        prefs.edit().clear().commit();
+        activity=getActivity();
+        getInstrumentation().waitForIdleSync();
+        View scanner=activity.findViewById(1002);
+        assertNotNull("Built-in scanner entry is missing", scanner);
+        assertTrue(scanner instanceof Button);
+        assertTrue(((Button)scanner).getText().toString().contains("扫码"));
+    }
+    public void testActionRowIsCompactAndExtraFunctionsDoNotOccupyEditorSpace() throws Exception {
+        activity=getActivity();
+        getInstrumentation().waitForIdleSync();
+        Button start=(Button)field("start");
+        int maximum=Math.round(48*activity.getResources().getDisplayMetrics().density);
+        assertTrue("Primary actions are oversized",start.getLayoutParams().height<=maximum);
+        assertNull("File transfer should be in the more menu",((Button)field("sendFile")).getParent());
+    }
+    public void testInAppScannerCanLaunchAndCancel() throws Exception {
+        prefs.edit().clear().commit();
+        activity=getActivity();
+        android.app.Instrumentation.ActivityMonitor monitor=getInstrumentation().addMonitor(
+                "com.journeyapps.barcodescanner.CaptureActivity",null,false);
+        ui(()->activity.findViewById(1002).performClick());
+        android.app.Activity camera=getInstrumentation().waitForMonitorWithTimeout(monitor,5000);
+        assertNotNull("Scanner Activity did not open",camera);
+        getInstrumentation().waitForIdleSync();
+        assertFalse("Scanner unexpectedly closed",camera.isFinishing());
+        ui(()->camera.finish());
+        getInstrumentation().waitForIdleSync();
+        getInstrumentation().removeMonitor(monitor);
+        assertNotNull(field("pairingInput"));
+        assertNull(PairingStore.load(prefs));
+    }
+    public void testScannerResultAfterTypingScreenRecreationIsSafe() throws Exception {
+        activity=getActivity();
+        assertNull(field("pairingInput"));
+        PairingConfig original=PairingStore.load(prefs);
+        Intent result=new Intent().putExtra("SCAN_RESULT", "voiceinput2pc://pair?p=bad")
+                .putExtra("SCAN_RESULT_FORMAT", "QR_CODE");
+        ui(()->invoke("onActivityResult",new Class<?>[]{int.class,int.class,Intent.class},
+                49374, android.app.Activity.RESULT_OK, result));
+        assertNotNull(field("pairingInput"));
+        assertEquals(original,PairingStore.load(prefs));
+    }
+    public void testKeyboardLeavesUsableEditorHeight() throws Exception {
+        activity=getActivity();
+        ui(()-> {
+            try {
+                editor().requestFocus();
+                ((android.view.inputmethod.InputMethodManager)activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE))
+                        .showSoftInput(editor(),android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            } catch(Exception e) { throw new AssertionError(e); }
+        });
+        waitFor(()-> editor().getRootWindowInsets().isVisible(android.view.WindowInsets.Type.ime()));
+        getInstrumentation().waitForIdleSync();
+        float density=activity.getResources().getDisplayMetrics().density;
+        assertTrue("Keyboard squeezed editor: " + editor().getHeight()/density + "dp",
+                editor().getHeight()>=120*density);
+        android.graphics.Rect bounds=new android.graphics.Rect();
+        editor().getGlobalVisibleRect(bounds);
+        assertTrue("Editor is covered by keyboard",bounds.height()>=120*density);
+    }
     public void testMalformedViewIntentNeverReplacesStoredPairing() throws Exception {
         PairingConfig original=PairingStore.load(prefs);
         setActivityIntent(new Intent(Intent.ACTION_VIEW,
